@@ -35,10 +35,24 @@ export interface MessageResponse {
 }
 
 export interface AttachmentResponse {
-  id: string
+  id?: string
   fileName: string
   fileUrl: string
   fileType: string
+  fileSize?: number
+}
+
+export interface AttachmentInput {
+  fileUrl: string
+  fileType?: string
+  fileSize?: number
+}
+
+export interface FileUploadResponse {
+  fileName: string
+  fileUrl: string
+  fileType: string
+  fileSize: number
 }
 
 export interface ReactionResponse {

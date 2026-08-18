@@ -1,5 +1,5 @@
 import api from '@/lib/axios'
-import type { ConversationResponse, CreateConversationRequest, MessageResponse, UserSummaryResponse } from '@/types/chat'
+import type { AttachmentInput, ConversationResponse, CreateConversationRequest, FileUploadResponse, MessageResponse, UserSummaryResponse } from '@/types/chat'
 
 const fallbackUsers: UserSummaryResponse[] = [
   { id: '1', username: 'minh.nguyen', fullName: 'Minh Nguyễn', departmentName: 'Kỹ thuật', roleName: 'Trưởng nhóm UI/UX' },
@@ -212,28 +212,67 @@ export async function getMessages(conversationId: string): Promise<MessageRespon
   try {
     const response = await api.get<any>(`/messages/${conversationId}`)
     const data = response.data?.data
+    let list: MessageResponse[] = []
 
     if (data?.items && Array.isArray(data.items)) {
-      return data.items
+      list = data.items
+    } else if (Array.isArray(data)) {
+      list = data
+    } else if (fallbackMessagesMap[conversationId]) {
+      list = fallbackMessagesMap[conversationId]
     }
-    if (Array.isArray(data)) {
-      return data
-    }
-    return []
+
+    // Always ensure chronological order: oldest at top, newest at bottom
+    return list.sort((a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime())
   } catch (error) {
     console.warn(`Cannot fetch messages for ${conversationId}, checking fallback:`, error)
     if (fallbackMessagesMap[conversationId]) {
-      return fallbackMessagesMap[conversationId]
+      return fallbackMessagesMap[conversationId].sort((a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime())
     }
     return []
   }
 }
 
-export async function sendMessageApi(conversationId: string, content: string): Promise<MessageResponse | null> {
+export async function uploadFilesApi(files: File[]): Promise<FileUploadResponse[]> {
+  if (!files || files.length === 0) return []
+  if (files.length > 30) {
+    throw new Error('Bạn chỉ có thể tải lên tối đa 30 tệp mỗi lần gửi.')
+  }
+
+  // Validate file sizes (< 25MB)
+  for (const file of files) {
+    if (file.size > 25 * 1024 * 1024) {
+      throw new Error(`Tệp "${file.name}" vượt quá dung lượng tối đa 25MB.`)
+    }
+  }
+
+  const formData = new FormData()
+  for (const file of files) {
+    formData.append('files', file)
+  }
+
+  const response = await api.post<any>('/files/upload', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  })
+
+  if (response.data?.success && response.data.data) {
+    return response.data.data
+  }
+  return []
+}
+
+export async function sendMessageApi(
+  conversationId: string,
+  content?: string,
+  attachments?: AttachmentInput[]
+): Promise<MessageResponse | null> {
   try {
     const response = await api.post<any>('/messages', {
       conversationId: conversationId,
-      content: content,
+      content: content || null,
+      attachments: attachments && attachments.length > 0 ? attachments : undefined,
     })
     
     if (response.data?.success && response.data.data) {

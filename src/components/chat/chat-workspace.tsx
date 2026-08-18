@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation"
 import {
   AlertTriangle,
   Bell,
+  Download,
   FileText,
   ImageIcon,
   Info,
@@ -25,13 +26,13 @@ import {
   X,
 } from "lucide-react"
 import { cn } from "@/utils/cn"
-import { deleteConversationApi, getConversations, removeParticipantApi } from "@/services/api/chat"
+import { deleteConversationApi, getConversations, getMessages, removeParticipantApi } from "@/services/api/chat"
 import { getCurrentUser, logoutUser } from "@/services/api/auth"
 import { useSignalR } from "@/hooks/useSignalR"
-import { formatMessageTime } from "@/utils/formatters"
+import { formatFileSize, formatMessageTime } from "@/utils/formatters"
 import { CreateGroupModal } from "@/components/chat/create-group-modal"
 import { Button } from "@/components/ui/button"
-import type { ConversationResponse, ParticipantResponse } from "@/types/chat"
+import type { AttachmentResponse, ConversationResponse, ParticipantResponse } from "@/types/chat"
 
 export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
   const params = useParams()
@@ -72,6 +73,21 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
       }
     }
   }, [deletedConversationId, conversationId, router])
+
+  const [conversationAttachments, setConversationAttachments] = useState<AttachmentResponse[]>([])
+
+  useEffect(() => {
+    async function loadAttachments() {
+      if (!conversationId) {
+        setConversationAttachments([])
+        return
+      }
+      const msgs = await getMessages(conversationId)
+      const allAtts = msgs.flatMap((m) => m.attachments || [])
+      setConversationAttachments(allAtts)
+    }
+    loadAttachments()
+  }, [conversationId, incomingConversation])
 
   async function loadConversations() {
     const user = getCurrentUser()
@@ -509,19 +525,92 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
             </div>
           )}
 
-          {/* Files & Media */}
-          <div className="flex flex-col gap-4 p-5">
+          {/* Files & Media Section */}
+          <div className="flex flex-col gap-5 p-5">
+            {/* Shared Media */}
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Tệp & Tài liệu</p>
-              <div className="mt-2.5 flex items-center gap-3 rounded-xl border p-2.5 bg-muted/30">
-                <div className="flex size-8 items-center justify-center rounded-lg bg-accent text-primary">
-                  <FileText className="size-4" />
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Ảnh & Video đã chia sẻ ({conversationAttachments.filter((a) => (a.fileType || '').startsWith('image/') || /\.(jpg|jpeg|png|gif|webp)$/i.test(a.fileUrl)).length})
+              </p>
+              {conversationAttachments.filter((a) => (a.fileType || '').startsWith('image/') || /\.(jpg|jpeg|png|gif|webp)$/i.test(a.fileUrl)).length === 0 ? (
+                <p className="mt-2 text-[11px] text-muted-foreground">Chưa có ảnh hoặc video nào</p>
+              ) : (
+                <div className="mt-2.5 grid grid-cols-3 gap-1.5 overflow-hidden rounded-xl">
+                  {conversationAttachments
+                    .filter((a) => (a.fileType || '').startsWith('image/') || /\.(jpg|jpeg|png|gif|webp)$/i.test(a.fileUrl))
+                    .slice(0, 6)
+                    .map((att, idx) => {
+                      const fullUrl = att.fileUrl.startsWith('http') || att.fileUrl.startsWith('blob')
+                        ? att.fileUrl
+                        : `${process.env.NEXT_PUBLIC_API_URL?.replace('/api', '') || 'http://localhost:5011'}${att.fileUrl.startsWith('/') ? '' : '/'}${att.fileUrl}`
+                      return (
+                        <a
+                          key={att.id || idx}
+                          href={fullUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="group relative block aspect-square overflow-hidden rounded-lg bg-muted"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={fullUrl}
+                            alt={att.fileName}
+                            className="size-full object-cover transition group-hover:scale-105"
+                          />
+                        </a>
+                      )
+                    })}
                 </div>
-                <div className="min-w-0">
-                  <p className="truncate text-xs font-medium">tailieu-du-an.pdf</p>
-                  <p className="text-[10px] text-muted-foreground">Hôm nay</p>
+              )}
+            </div>
+
+            {/* Shared Documents */}
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Tệp & Tài liệu ({conversationAttachments.filter((a) => !(a.fileType || '').startsWith('image/') && !/\.(jpg|jpeg|png|gif|webp)$/i.test(a.fileUrl)).length})
+              </p>
+              {conversationAttachments.filter((a) => !(a.fileType || '').startsWith('image/') && !/\.(jpg|jpeg|png|gif|webp)$/i.test(a.fileUrl)).length === 0 ? (
+                <p className="mt-2 text-[11px] text-muted-foreground">Chưa có tệp tài liệu nào</p>
+              ) : (
+                <div className="mt-2.5 space-y-2">
+                  {conversationAttachments
+                    .filter((a) => !(a.fileType || '').startsWith('image/') && !/\.(jpg|jpeg|png|gif|webp)$/i.test(a.fileUrl))
+                    .slice(0, 5)
+                    .map((att, idx) => {
+                      const fullUrl = att.fileUrl.startsWith('http') || att.fileUrl.startsWith('blob')
+                        ? att.fileUrl
+                        : `${process.env.NEXT_PUBLIC_API_URL?.replace('/api', '') || 'http://localhost:5011'}${att.fileUrl.startsWith('/') ? '' : '/'}${att.fileUrl}`
+                      return (
+                        <div
+                          key={att.id || idx}
+                          className="flex items-center justify-between gap-2.5 rounded-xl border p-2.5 bg-muted/30 hover:bg-muted/60 transition"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-accent text-primary">
+                              <FileText className="size-4" />
+                            </div>
+                            <div className="min-w-0">
+                              <p className="truncate text-xs font-medium">{att.fileName}</p>
+                              {att.fileSize && (
+                                <p className="text-[10px] text-muted-foreground">{formatFileSize(att.fileSize)}</p>
+                              )}
+                            </div>
+                          </div>
+                          <a
+                            href={fullUrl}
+                            download={att.fileName}
+                            target="_blank"
+                            rel="noreferrer"
+                            title={`Tải xuống ${att.fileName}`}
+                            className="p-1.5 text-muted-foreground hover:text-primary transition rounded"
+                          >
+                            <Download className="size-3.5" />
+                          </a>
+                        </div>
+                      )
+                    })}
                 </div>
-              </div>
+              )}
             </div>
           </div>
         </aside>
