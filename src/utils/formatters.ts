@@ -27,8 +27,37 @@ export function formatDate(
   },
   locale = "vi-VN"
 ): string {
-  const d = typeof date === "string" ? new Date(date) : date;
+  const d = typeof date === "string" ? parseUtcDate(date) : date;
   return new Intl.DateTimeFormat(locale, options).format(d);
+}
+
+/**
+ * Safely parses an ISO date string from backend database as UTC if timezone is missing
+ */
+export function parseUtcDate(dateString: string): Date {
+  let str = dateString.trim();
+  if (!str.endsWith("Z") && !str.includes("+") && !str.match(/-\d{2}:\d{2}$/)) {
+    str += "Z";
+  }
+  return new Date(str);
+}
+
+/**
+ * Formats message timestamp to accurate local time (e.g. "11:33 AM" or "11:33")
+ */
+export function formatMessageTime(dateString?: string | Date | null): string {
+  if (!dateString) return "";
+  try {
+    const d = typeof dateString === "string" ? parseUtcDate(dateString) : dateString;
+    if (isNaN(d.getTime())) return "";
+
+    return d.toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return "";
+  }
 }
 
 /**
@@ -36,7 +65,7 @@ export function formatDate(
  * @example formatRelativeTime("2024-01-10") → "5 ngày trước"
  */
 export function formatRelativeTime(date: Date | string, locale = "vi-VN"): string {
-  const d = typeof date === "string" ? new Date(date) : date;
+  const d = typeof date === "string" ? parseUtcDate(date) : date;
   const diffMs = d.getTime() - Date.now();
   const diffSec = Math.round(diffMs / 1000);
   const diffMin = Math.round(diffSec / 60);
@@ -70,4 +99,15 @@ export function getInitials(name: string): string {
     .map((word) => word[0]?.toUpperCase() ?? "")
     .slice(0, 2)
     .join("");
+}
+
+/**
+ * Formats a file size in bytes to a human-readable string (e.g. "1.2 MB", "450 KB")
+ */
+export function formatFileSize(bytes?: number | null): string {
+  if (!bytes || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const size = (bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1);
+  return `${size} ${units[i]}`;
 }
