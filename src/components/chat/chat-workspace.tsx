@@ -1,10 +1,11 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
 import {
   AlertTriangle,
   Bell,
+  BellOff,
   Download,
   FileText,
   ImageIcon,
@@ -26,13 +27,18 @@ import {
   X,
 } from "lucide-react"
 import { cn } from "@/utils/cn"
-import { deleteConversationApi, getConversations, getMessages, removeParticipantApi } from "@/services/api/chat"
+import { deleteConversationApi, getConversations, getMessages, removeParticipantApi, searchUsersApi } from "@/services/api/chat"
 import { getCurrentUser, logoutUser } from "@/services/api/auth"
 import { useSignalR } from "@/hooks/useSignalR"
 import { formatFileSize, formatMessageTime } from "@/utils/formatters"
+import { playNotificationSound } from "@/utils/sound"
 import { CreateGroupModal } from "@/components/chat/create-group-modal"
+import { AddMembersModal } from "@/components/chat/add-members-modal"
+import { DraftChatWorkspace } from "@/components/chat/draft-chat-workspace"
+import { MessageSearchModal } from "@/components/chat/message-search-modal"
+import { NotificationToast, type ToastNotificationItem } from "@/components/chat/notification-toast"
 import { Button } from "@/components/ui/button"
-import type { AttachmentResponse, ConversationResponse, ParticipantResponse } from "@/types/chat"
+import type { AttachmentResponse, ConversationResponse, ParticipantResponse, UserSummaryResponse } from "@/types/chat"
 
 export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
   const params = useParams()
@@ -45,11 +51,44 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
   const [loading, setLoading] = useState(true)
   const [currentUser, setCurrentUser] = useState<any>(null)
   const [isCreateGroupOpen, setIsCreateGroupOpen] = useState(false)
+  const [isAddMembersOpen, setIsAddMembersOpen] = useState(false)
+  const [isSearchMessagesOpen, setIsSearchMessagesOpen] = useState(false)
+  const [draftRecipient, setDraftRecipient] = useState<UserSummaryResponse | null>(null)
+  const [peopleList, setPeopleList] = useState<UserSummaryResponse[]>([])
+  const [loadingPeople, setLoadingPeople] = useState(false)
   const [showDisbandConfirm, setShowDisbandConfirm] = useState(false)
   const [disbanding, setDisbanding] = useState(false)
   const [searchSidebar, setSearchSidebar] = useState("")
+  const [mutedConversations, setMutedConversations] = useState<string[]>([])
+  const [toastNotification, setToastNotification] = useState<ToastNotificationItem | null>(null)
 
-  const { incomingConversation, deletedConversationId } = useSignalR()
+  const { incomingMessage, incomingConversation, deletedConversationId } = useSignalR()
+  const lastHandledMessageIdRef = useRef<string | null>(null)
+
+  // Initialize muted conversations and request native notification permission
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('muted_conversations')
+      if (saved) setMutedConversations(JSON.parse(saved))
+    } catch {}
+
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      if (Notification.permission === 'default') {
+        Notification.requestPermission().catch(() => {})
+      }
+    }
+  }, [])
+
+  function toggleMuteConversation(convId: string) {
+    setMutedConversations((prev) => {
+      const isMuted = prev.includes(convId)
+      const next = isMuted ? prev.filter((id) => id !== convId) : [...prev, convId]
+      try {
+        localStorage.setItem('muted_conversations', JSON.stringify(next))
+      } catch {}
+      return next
+    })
+  }
 
   // Real-time update sidebar when invited to a new group
   useEffect(() => {
@@ -64,12 +103,149 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
     }
   }, [incomingConversation])
 
+  // Real-time handle incoming messages (Unread counts, Sound, Push, In-App Toast)
+  useEffect(() => {
+    if (!incomingMessage || lastHandledMessageIdRef.current === incomingMessage.id) return
+    lastHandledMessageIdRef.current = incomingMessage.id
+
+    const isFromMe =
+      (currentUser?.userId && incomingMessage.senderId === currentUser.userId) ||
+      incomingMessage.senderName === currentUser?.fullName ||
+      incomingMessage.senderName === "Tôi"
+
+    let convTitle = incomingMessage.senderName || "Tin nhắn mới"
+
+    // 1. Always update conversation item in sidebar (last message & unread count)
+    setConversations((prev) => {
+      const target = prev.find((c) => c.id === incomingMessage.conversationId)
+      if (target?.title) convTitle = target.title
+
+      return prev.map((c) => {
+        if (c.id === incomingMessage.conversationId) {
+          const isCurrentOpen = conversationId === c.id
+          const newCount = isCurrentOpen || isFromMe ? 0 : (c.unreadCount || 0) + 1
+          return {
+            ...c,
+            lastMessage: {
+              id: incomingMessage.id,
+              content:
+                incomingMessage.content ||
+                (incomingMessage.attachments && incomingMessage.attachments.length > 0
+                  ? `[Đã gửi ${incomingMessage.attachments.length} tệp đính kèm]`
+                  : ""),
+              senderName: incomingMessage.senderName,
+              sentAt: incomingMessage.sentAt,
+            },
+            unreadCount: newCount,
+          }
+        }
+        return c
+      })
+    })
+
+    // 2. Business Rule: DO NOT notify if user is currently looking at this conversation
+    if (conversationId === incomingMessage.conversationId) return
+
+    // 3. Do not notify if sent by me
+    if (isFromMe) return
+
+    // 4. Do not notify if conversation is muted
+    const isMuted = mutedConversations.includes(incomingMessage.conversationId)
+    if (isMuted) return
+
+    // 5. Play chime sound
+    playNotificationSound()
+
+    // 6. Set In-App Toast notification
+    setToastNotification({
+      id: incomingMessage.id,
+      conversationId: incomingMessage.conversationId,
+      title: convTitle,
+      senderName: incomingMessage.senderName,
+      content:
+        incomingMessage.content ||
+        (incomingMessage.attachments && incomingMessage.attachments.length > 0
+          ? `[Đã gửi ${incomingMessage.attachments.length} tệp đính kèm]`
+          : ""),
+      time: formatMessageTime(incomingMessage.sentAt),
+    })
+
+    // 7. Native Browser Notification (if document is hidden / on another tab)
+    if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
+      if (document.hidden) {
+        try {
+          const nativeNotif = new Notification(`${convTitle} · ${incomingMessage.senderName}`, {
+            body: incomingMessage.content || "Đã gửi một tệp đính kèm",
+            icon: "/favicon.ico",
+          })
+          nativeNotif.onclick = () => {
+            window.focus()
+            router.push(`/chat/${incomingMessage.conversationId}`)
+          }
+        } catch {}
+      }
+    }
+  }, [incomingMessage, conversationId, currentUser, mutedConversations, router])
+
+  // Reset unread count & draft recipient when opening a conversation
+  useEffect(() => {
+    if (conversationId) {
+      setDraftRecipient(null)
+      setConversations((prev) =>
+        prev.map((c) => (c.id === conversationId ? { ...c, unreadCount: 0 } : c))
+      )
+    }
+  }, [conversationId])
+
+  // Fetch people list when Tab is "Người" or searching
+  useEffect(() => {
+    if (activeTab === "Người" || searchSidebar.trim()) {
+      setLoadingPeople(true)
+      const timer = setTimeout(async () => {
+        try {
+          const data = await searchUsersApi(searchSidebar)
+          setPeopleList(data)
+        } catch {
+          setPeopleList([])
+        } finally {
+          setLoadingPeople(false)
+        }
+      }, 250)
+      return () => clearTimeout(timer)
+    }
+  }, [activeTab, searchSidebar])
+
+  function handleSelectPerson(person: UserSummaryResponse) {
+    const existingDirect = conversations.find(
+      (c) =>
+        c.type === "Direct" &&
+        c.participants?.some(
+          (p) =>
+            p.userId === person.id ||
+            p.username === person.username ||
+            p.fullName === person.fullName
+        )
+    )
+    if (existingDirect) {
+      setDraftRecipient(null)
+      router.push(`/chat/${existingDirect.id}`)
+    } else {
+      setDraftRecipient(person)
+    }
+  }
+
+  // Update browser tab title with total unread count
+  useEffect(() => {
+    const totalUnread = conversations.reduce((sum, c) => sum + (c.unreadCount || 0), 0)
+    document.title = totalUnread > 0 ? `(${totalUnread}) Nexus — Trò chuyện` : "Nexus — Trò chuyện"
+  }, [conversations])
+
   // Real-time remove conversation when disbanded
   useEffect(() => {
     if (deletedConversationId) {
       setConversations((prev) => prev.filter((c) => c.id !== deletedConversationId))
       if (conversationId === deletedConversationId) {
-        router.replace('/chat')
+        router.replace("/chat")
       }
     }
   }, [deletedConversationId, conversationId, router])
@@ -106,11 +282,30 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
   // Determine kind/name from ConversationResponse
   function getConversationInfo(item: ConversationResponse) {
     const isGroup = item.type === "Group"
-    const name = item.title || (item.participants?.map((p) => p.fullName).join(", ") || "Hội thoại")
+
+    // For Direct chat, find the OTHER participant (not current user)
+    const otherParticipant = item.participants?.find(
+      (p) =>
+        (currentUser?.userId && p.userId !== currentUser.userId) ||
+        (currentUser?.username && p.username !== currentUser.username) ||
+        (currentUser?.fullName && p.fullName !== currentUser.fullName)
+    )
+
+    let name = ""
+    if (isGroup) {
+      name = item.title || item.participants?.map((p) => p.fullName).join(", ") || "Nhóm chat"
+    } else {
+      name = otherParticipant?.fullName || item.title || item.participants?.[0]?.fullName || "Hội thoại"
+    }
+
+    const avatarText = isGroup
+      ? "GR"
+      : (otherParticipant?.fullName ? otherParticipant.fullName.substring(0, 2).toUpperCase() : name.substring(0, 2).toUpperCase())
+
     const preview = item.lastMessage?.content || "Chưa có tin nhắn"
     const time = formatMessageTime(item.lastMessage?.sentAt)
     const members = item.participants?.length || 2
-    return { isGroup, name, preview, time, members }
+    return { isGroup, name, avatarText, preview, time, members, otherParticipant }
   }
 
   const selectedInfo = selected ? getConversationInfo(selected) : null
@@ -121,14 +316,17 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
     selected?.participants?.some(
       (p) =>
         ((currentUser?.userId && p.userId === currentUser.userId) ||
-         (currentUser?.fullName && p.fullName === currentUser.fullName) ||
-         (currentUser?.username && p.username === currentUser.username)) &&
+          (currentUser?.fullName && p.fullName === currentUser.fullName) ||
+          (currentUser?.username && p.username === currentUser.username)) &&
         p.role === "Admin"
     )
   )
 
   function handleGroupCreated(newConv: ConversationResponse) {
-    setConversations((prev) => [newConv, ...prev])
+    setConversations((prev) => {
+      if (prev.some((c) => c.id === newConv.id)) return prev
+      return [newConv, ...prev]
+    })
     router.push(`/chat/${newConv.id}`)
   }
 
@@ -158,7 +356,12 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
     await deleteConversationApi(currentId)
   }
 
-  const filteredConversations = conversations.filter((item) => {
+  // Deduplicate conversations by ID
+  const uniqueConversations = Array.from(
+    new Map(conversations.map((c) => [c.id, c])).values()
+  )
+
+  const filteredConversations = uniqueConversations.filter((item) => {
     const info = getConversationInfo(item)
     const matchesSearch =
       info.name.toLowerCase().includes(searchSidebar.toLowerCase()) ||
@@ -173,11 +376,36 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
 
   return (
     <div className="flex h-dvh min-h-[620px] overflow-hidden bg-background text-foreground">
+      {/* Real-time In-App Notification Toast */}
+      <NotificationToast
+        notification={toastNotification}
+        onClose={() => setToastNotification(null)}
+      />
+
+      {/* Message Search Modal (MES-006) */}
+      <MessageSearchModal
+        isOpen={isSearchMessagesOpen}
+        onClose={() => setIsSearchMessagesOpen(false)}
+        initialConversationId={conversationId}
+      />
+
       {/* Create Group Modal */}
       <CreateGroupModal
         isOpen={isCreateGroupOpen}
         onClose={() => setIsCreateGroupOpen(false)}
         onSuccess={handleGroupCreated}
+      />
+
+      {/* Add Members to Current Group Modal */}
+      <AddMembersModal
+        isOpen={isAddMembersOpen}
+        onClose={() => setIsAddMembersOpen(false)}
+        conversation={selected || null}
+        onSuccess={(updatedConv) => {
+          setConversations((prev) =>
+            prev.map((c) => (c.id === updatedConv.id ? updatedConv : c))
+          )
+        }}
       />
 
       {/* Disband Group Confirmation Modal */}
@@ -270,67 +498,131 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
               value={searchSidebar}
               onChange={(e) => setSearchSidebar(e.target.value)}
               className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
-              placeholder="Tìm kiếm cuộc trò chuyện..."
+              placeholder={activeTab === "Người" ? "Tìm nhân viên để nhắn tin..." : "Tìm kiếm cuộc trò chuyện..."}
             />
             {searchSidebar && (
               <button onClick={() => setSearchSidebar("")} className="text-muted-foreground hover:text-foreground">
                 <X className="size-3" />
               </button>
             )}
+            <button
+              onClick={() => setIsSearchMessagesOpen(true)}
+              className="text-muted-foreground hover:text-primary transition p-0.5 rounded"
+              title="Tìm kiếm tin nhắn nâng cao (MES-006)"
+            >
+              <Search className="size-3.5" />
+            </button>
           </div>
         </div>
 
         <div className="flex-1 overflow-y-auto px-2">
-          <div className="flex items-center justify-between px-3 pb-2">
-            <span className="text-xs font-medium text-muted-foreground">Gần đây</span>
-            <button
-              onClick={() => setIsCreateGroupOpen(true)}
-              className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition"
-              aria-label="Tạo hội thoại"
-              title="Tạo nhóm chat mới"
-            >
-              <Plus className="size-4" />
-            </button>
-          </div>
-
-          <div className="flex flex-col gap-1">
-            {loading && <p className="p-3 text-xs text-muted-foreground text-center">Đang tải...</p>}
-            {!loading && filteredConversations.length === 0 && (
-              <div className="p-6 text-center text-xs text-muted-foreground">
-                Chưa có hội thoại nào
+          {activeTab === "Người" ? (
+            /* People List for Direct Messaging (Section 13) */
+            <div className="flex flex-col gap-1 pt-1">
+              <div className="flex items-center justify-between px-3 pb-2">
+                <span className="text-xs font-medium text-muted-foreground">Nhân viên</span>
+                <span className="text-[10px] text-muted-foreground">{peopleList.length} người</span>
               </div>
-            )}
-            {filteredConversations.map((item) => {
-              const info = getConversationInfo(item)
-              const isActive = conversationId === item.id
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => router.push(`/chat/${item.id}`)}
-                  className={cn(
-                    "flex items-center gap-3 rounded-xl px-3 py-2.5 text-left transition",
-                    isActive ? "bg-accent text-accent-foreground font-medium" : "hover:bg-muted/70 text-foreground"
-                  )}
-                >
-                  <div
+
+              {loadingPeople && <p className="p-3 text-xs text-muted-foreground text-center">Đang tìm kiếm...</p>}
+              {!loadingPeople && peopleList.length === 0 && (
+                <div className="p-6 text-center text-xs text-muted-foreground">
+                  Không tìm thấy nhân viên phù hợp
+                </div>
+              )}
+              {peopleList.map((person) => {
+                const isSelectedDraft = draftRecipient?.id === person.id
+                return (
+                  <button
+                    key={person.id}
+                    onClick={() => handleSelectPerson(person)}
                     className={cn(
-                      "flex size-10 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-primary-foreground",
-                      info.isGroup ? "bg-chart-3" : "bg-primary"
+                      "flex items-center gap-3 rounded-xl px-3 py-2.5 text-left transition",
+                      isSelectedDraft ? "bg-accent font-medium text-accent-foreground" : "hover:bg-muted/70 text-foreground"
                     )}
                   >
-                    {info.isGroup ? <Users className="size-4" /> : info.name.substring(0, 2).toUpperCase()}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="truncate text-xs font-medium">{info.name}</span>
-                      <span className="text-[10px] text-muted-foreground shrink-0">{info.time}</span>
+                    <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary font-semibold text-xs">
+                      {person.fullName ? person.fullName.substring(0, 2).toUpperCase() : "NV"}
                     </div>
-                    <p className="truncate text-[11px] text-muted-foreground">{info.preview}</p>
-                  </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-medium">{person.fullName}</p>
+                      <p className="truncate text-[11px] text-muted-foreground">
+                        {person.departmentName || person.roleName || person.username}
+                      </p>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          ) : (
+            /* Conversations List */
+            <>
+              <div className="flex items-center justify-between px-3 pb-2">
+                <span className="text-xs font-medium text-muted-foreground">Gần đây</span>
+                <button
+                  onClick={() => setIsCreateGroupOpen(true)}
+                  className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition"
+                  aria-label="Tạo hội thoại"
+                  title="Tạo nhóm chat mới"
+                >
+                  <Plus className="size-4" />
                 </button>
-              )
-            })}
-          </div>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                {loading && <p className="p-3 text-xs text-muted-foreground text-center">Đang tải...</p>}
+                {!loading && filteredConversations.length === 0 && (
+                  <div className="p-6 text-center text-xs text-muted-foreground">
+                    Chưa có hội thoại nào
+                  </div>
+                )}
+                {filteredConversations.map((item) => {
+                  const info = getConversationInfo(item)
+                  const isActive = conversationId === item.id && !draftRecipient
+                  const isMuted = mutedConversations.includes(item.id)
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => {
+                        setDraftRecipient(null)
+                        router.push(`/chat/${item.id}`)
+                      }}
+                      className={cn(
+                        "flex items-center gap-3 rounded-xl px-3 py-2.5 text-left transition relative",
+                        isActive ? "bg-accent text-accent-foreground font-medium" : "hover:bg-muted/70 text-foreground"
+                      )}
+                    >
+                      <div
+                        className={cn(
+                          "flex size-10 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-primary-foreground",
+                          info.isGroup ? "bg-chart-3" : "bg-primary"
+                        )}
+                      >
+                        {info.isGroup ? <Users className="size-4" /> : info.avatarText}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="truncate text-xs font-medium">{info.name}</span>
+                          <div className="flex items-center gap-1 shrink-0">
+                            {isMuted && <span title="Đã tắt thông báo"><BellOff className="size-3 text-muted-foreground" /></span>}
+                            <span className="text-[10px] text-muted-foreground">{info.time}</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between gap-2 mt-0.5">
+                          <p className="truncate text-[11px] text-muted-foreground flex-1">{info.preview}</p>
+                          {item.unreadCount && item.unreadCount > 0 && !isActive ? (
+                            <span className="flex size-4.5 min-w-4.5 items-center justify-center rounded-full bg-primary px-1 text-[9px] font-bold text-primary-foreground shadow-xs animate-in zoom-in-50 shrink-0">
+                              {item.unreadCount > 99 ? "99+" : item.unreadCount}
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            </>
+          )}
         </div>
 
         {/* User Profile Bar */}
@@ -373,7 +665,7 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
                     selectedInfo.isGroup ? "bg-chart-3" : "bg-primary"
                   )}
                 >
-                  {selectedInfo.isGroup ? <Users className="size-5" /> : selectedInfo.name.substring(0, 2).toUpperCase()}
+                  {selectedInfo.isGroup ? <Users className="size-5" /> : selectedInfo.avatarText}
                 </div>
                 <div className="min-w-0">
                   <h2 className="truncate text-sm font-semibold">{selectedInfo.name}</h2>
@@ -388,6 +680,29 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
             {!selectedInfo && <h2 className="text-sm font-semibold text-muted-foreground">Chọn một hội thoại</h2>}
           </div>
           <div className="flex items-center gap-1">
+            <button
+              onClick={() => setIsSearchMessagesOpen(true)}
+              className="rounded-lg p-2 text-muted-foreground hover:bg-accent hover:text-foreground transition"
+              aria-label="Tìm kiếm tin nhắn"
+              title="Tìm kiếm tin nhắn (MES-006)"
+            >
+              <Search className="size-4" />
+            </button>
+            {selected && (
+              <button
+                onClick={() => toggleMuteConversation(selected.id)}
+                className={cn(
+                  "rounded-lg p-2 transition hover:bg-accent",
+                  mutedConversations.includes(selected.id)
+                    ? "text-destructive bg-destructive/10 hover:bg-destructive/20"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+                aria-label="Tắt / Bật thông báo"
+                title={mutedConversations.includes(selected.id) ? "Bật lại thông báo" : "Tắt thông báo cuộc trò chuyện này"}
+              >
+                {mutedConversations.includes(selected.id) ? <BellOff className="size-4" /> : <Bell className="size-4" />}
+              </button>
+            )}
             <button
               onClick={() => setShowDetails((value) => !value)}
               className={cn(
@@ -411,7 +726,21 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
         </header>
 
         <div className="flex-1 overflow-hidden relative flex flex-col">
-          {children}
+          {draftRecipient ? (
+            <DraftChatWorkspace
+              recipient={draftRecipient}
+              onConversationCreated={(newConv) => {
+                setConversations((prev) => {
+                  if (prev.some((c) => c.id === newConv.id)) return prev
+                  return [newConv, ...prev]
+                })
+                setDraftRecipient(null)
+              }}
+              onCancel={() => setDraftRecipient(null)}
+            />
+          ) : (
+            children
+          )}
         </div>
       </main>
 
@@ -437,12 +766,33 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
                 selectedInfo.isGroup ? "bg-chart-3" : "bg-primary"
               )}
             >
-              {selectedInfo.isGroup ? <Users className="size-7" /> : selectedInfo.name.substring(0, 2).toUpperCase()}
+              {selectedInfo.isGroup ? <Users className="size-7" /> : selectedInfo.avatarText}
             </div>
             <h3 className="mt-3 text-sm font-semibold text-center">{selectedInfo.name}</h3>
             <p className="mt-1 text-xs text-muted-foreground">
               {selectedInfo.isGroup ? "Nhóm làm việc" : "Trò chuyện trực tiếp"}
             </p>
+            <div className="mt-3 flex items-center gap-2">
+              <button
+                onClick={() => selected && toggleMuteConversation(selected.id)}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-medium transition shadow-xs",
+                  selected && mutedConversations.includes(selected.id)
+                    ? "border-destructive/30 bg-destructive/10 text-destructive hover:bg-destructive/20"
+                    : "border-border bg-background hover:bg-muted text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {selected && mutedConversations.includes(selected.id) ? (
+                  <>
+                    <BellOff className="size-3.5" /> Bật thông báo
+                  </>
+                ) : (
+                  <>
+                    <Bell className="size-3.5" /> Tắt thông báo
+                  </>
+                )}
+              </button>
+            </div>
           </div>
 
           {/* Members List Section */}
@@ -455,9 +805,9 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
                 {/* Only Admin can add members */}
                 {isCurrentUserAdmin && (
                   <button
-                    onClick={() => setIsCreateGroupOpen(true)}
+                    onClick={() => setIsAddMembersOpen(true)}
                     className="flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
-                    title="Mở thêm thành viên"
+                    title="Thêm thành viên vào nhóm này"
                   >
                     <UserPlus className="size-3" /> Thêm
                   </button>

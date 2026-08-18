@@ -6,6 +6,8 @@ export interface ConversationResponse {
   createdAt: string
   participants: ParticipantResponse[]
   lastMessage?: MessageSummaryResponse
+  unreadCount?: number
+  isMuted?: boolean
 }
 
 export interface ParticipantResponse {
@@ -93,3 +95,49 @@ export interface CreateConversationRequest {
   participantIds: string[]
   category?: 'department' | 'shift' | 'project' | 'general'
 }
+
+export interface SendDirectMessagePayload {
+  recipientId: string
+  content?: string
+  attachments?: AttachmentInput[]
+  clientOperationId?: string
+}
+
+export interface SendDirectMessageResponse {
+  conversation: ConversationResponse
+  message: MessageResponse
+  wasConversationCreated: boolean
+}
+
+export interface SearchMessagesParams {
+  q?: string
+  senderId?: string
+  conversationId?: string
+  fromDate?: string
+  toDate?: string
+  hasAttachments?: boolean
+  fileType?: string
+  pageNumber?: number
+  pageSize?: number
+}
+
+export interface MessageSearchResultItem {
+  messageId: string
+  conversationId: string
+  conversationTitle?: string
+  conversationType: string
+  senderId: string
+  senderName: string
+  senderUsername?: string
+  content?: string
+  sentAt: string
+  attachments: AttachmentResponse[]
+}
+
+export interface MessageSearchPagedResponse {
+  items: MessageSearchResultItem[]
+  totalCount: number
+  pageNumber: number
+  pageSize: number
+}
+

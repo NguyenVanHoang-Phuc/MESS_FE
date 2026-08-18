@@ -294,3 +294,59 @@ export async function sendMessageApi(
     return null
   }
 }
+
+export async function searchUsersApi(q: string, limit = 20): Promise<UserSummaryResponse[]> {
+  try {
+    const response = await api.get<any>('/users/search', {
+      params: { q, limit },
+    })
+    if (response.data?.success && Array.isArray(response.data.data)) {
+      return response.data.data
+    }
+    return []
+  } catch (error) {
+    console.error('Failed to search users via API, fallback to local filtering', error)
+    const users = await getUsers()
+    const query = q.toLowerCase().trim()
+    if (!query) return users.slice(0, limit)
+    return users
+      .filter(
+        (u) =>
+          u.fullName.toLowerCase().includes(query) ||
+          u.username.toLowerCase().includes(query) ||
+          (u.departmentName && u.departmentName.toLowerCase().includes(query))
+      )
+      .slice(0, limit)
+  }
+}
+
+export async function sendDirectMessageApi(
+  payload: import('@/types/chat').SendDirectMessagePayload
+): Promise<import('@/types/chat').SendDirectMessageResponse | null> {
+  try {
+    const response = await api.post<any>('/messages/direct', payload)
+    if (response.data?.success && response.data.data) {
+      return response.data.data
+    }
+    return null
+  } catch (error) {
+    console.error('Failed to send direct message via API', error)
+    throw error
+  }
+}
+
+export async function searchMessagesApi(
+  params: import('@/types/chat').SearchMessagesParams
+): Promise<import('@/types/chat').MessageSearchPagedResponse> {
+  try {
+    const response = await api.get<any>('/messages/search', { params })
+    if (response.data?.success && response.data.data) {
+      return response.data.data
+    }
+    return { items: [], totalCount: 0, pageNumber: 1, pageSize: 20 }
+  } catch (error) {
+    console.error('Failed to search messages via API', error)
+    return { items: [], totalCount: 0, pageNumber: 1, pageSize: 20 }
+  }
+}
+

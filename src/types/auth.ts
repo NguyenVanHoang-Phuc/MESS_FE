@@ -19,3 +19,29 @@ export interface UserProfile {
   roleName?: string
   departmentName?: string
 }
+
+export interface SendOtpRequest {
+  email: string
+  fullName: string
+  password: string
+}
+
+export interface SendOtpResponse {
+  email: string
+  expiresInSeconds: number
+  message: string
+}
+
+export interface VerifyOtpRequest {
+  email: string
+  otpCode: string
+}
+
+export type User = UserProfile
+export type AuthResponse = LoginResponse
+export interface RegisterRequest {
+  email: string
+  fullName: string
+  password: string
+}
+
