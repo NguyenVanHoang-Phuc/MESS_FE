@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
 import { signalRService } from '@/lib/signalr'
-import type { ConversationResponse, MessageResponse } from '@/types/chat'
+import type { ConversationResponse, MessageResponse, MessagesReadEvent } from '@/types/chat'
 
 export function useSignalR(conversationId?: string | null) {
   const [isConnected, setIsConnected] = useState(false)
   const [incomingMessage, setIncomingMessage] = useState<MessageResponse | null>(null)
   const [incomingConversation, setIncomingConversation] = useState<ConversationResponse | null>(null)
   const [deletedConversationId, setDeletedConversationId] = useState<string | null>(null)
+  const [readEvent, setReadEvent] = useState<MessagesReadEvent | null>(null)
 
   useEffect(() => {
     const connection = signalRService.getConnection()
@@ -43,18 +44,35 @@ export function useSignalR(conversationId?: string | null) {
       setDeletedConversationId(convId)
     }
 
+    const handleMessagesRead = (eventData: any) => {
+      console.log('SignalR: Received messages read event:', eventData)
+      // Normalize casing if needed
+      const normalized: MessagesReadEvent = {
+        conversationId: eventData.conversationId || eventData.ConversationId,
+        readerId: eventData.readerId || eventData.ReaderId,
+        readerName: eventData.readerName || eventData.ReaderName,
+        messageIds: eventData.messageIds || eventData.MessageIds || [],
+        readAt: eventData.readAt || eventData.ReadAt || new Date().toISOString(),
+      }
+      if (!conversationId || normalized.conversationId === conversationId) {
+        setReadEvent(normalized)
+      }
+    }
+
     connection.on('ReceiveNewMessage', handleMessage)
     connection.on('ReceiveMessage', handleMessage)
     connection.on('ReceiveNewConversation', handleNewConversation)
     connection.on('ReceiveConversationDeleted', handleConversationDeleted)
+    connection.on('ReceiveMessagesRead', handleMessagesRead)
 
     return () => {
       connection.off('ReceiveNewMessage', handleMessage)
       connection.off('ReceiveMessage', handleMessage)
       connection.off('ReceiveNewConversation', handleNewConversation)
       connection.off('ReceiveConversationDeleted', handleConversationDeleted)
+      connection.off('ReceiveMessagesRead', handleMessagesRead)
     }
   }, [conversationId])
 
-  return { isConnected, incomingMessage, incomingConversation, deletedConversationId }
+  return { isConnected, incomingMessage, incomingConversation, deletedConversationId, readEvent }
 }

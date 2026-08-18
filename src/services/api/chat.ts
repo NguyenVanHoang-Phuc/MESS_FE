@@ -208,6 +208,16 @@ export async function deleteConversationApi(conversationId: string): Promise<boo
   }
 }
 
+export async function markConversationAsReadApi(conversationId: string): Promise<boolean> {
+  try {
+    const response = await api.post<any>(`/messages/conversations/${conversationId}/read`)
+    return Boolean(response.data?.success)
+  } catch (error) {
+    console.error(`Failed to mark conversation ${conversationId} as read:`, error)
+    return false
+  }
+}
+
 export async function getMessages(conversationId: string): Promise<MessageResponse[]> {
   try {
     const response = await api.get<any>(`/messages/${conversationId}`)

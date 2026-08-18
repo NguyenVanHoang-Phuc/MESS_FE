@@ -4,6 +4,8 @@ import { FormEvent, useEffect, useState, useRef, ChangeEvent, DragEvent, Clipboa
 import {
   AlertCircle,
   ArrowUp,
+  Check,
+  CheckCheck,
   Download,
   Eye,
   File,
@@ -26,7 +28,7 @@ import { Button } from "@/components/ui/button"
 import { Message, MessageAvatar, MessageContent, MessageGroup } from "@/components/ui/message"
 import { MessageScroller, MessageScrollerContent, MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport } from "@/components/ui/message-scroller"
 import { useSignalR } from "@/hooks/useSignalR"
-import { getMessages, sendMessageApi, uploadFilesApi } from "@/services/api/chat"
+import { getMessages, markConversationAsReadApi, sendMessageApi, uploadFilesApi } from "@/services/api/chat"
 import { getCurrentUser } from "@/services/api/auth"
 import { formatFileSize, formatMessageTime } from "@/utils/formatters"
 import { cn } from "@/utils/cn"
@@ -54,13 +56,20 @@ export default function ConversationPage() {
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
-  const { incomingMessage } = useSignalR(conversationId)
+  const { incomingMessage, readEvent } = useSignalR(conversationId)
   const [currentUser, setCurrentUser] = useState<any>(null)
 
   useEffect(() => {
     const user = getCurrentUser()
     if (user) setCurrentUser(user)
   }, [])
+
+  // Mark conversation as read on load and when receiving new message
+  useEffect(() => {
+    if (conversationId) {
+      markConversationAsReadApi(conversationId)
+    }
+  }, [conversationId, incomingMessage])
 
   // Listen for real-time incoming SignalR messages and prevent duplicates
   useEffect(() => {
@@ -96,6 +105,34 @@ export default function ConversationPage() {
       return [...prev, incomingMessage]
     })
   }, [incomingMessage, conversationId, currentUser])
+
+  // Listen for real-time read receipts from SignalR
+  useEffect(() => {
+    if (!readEvent || readEvent.conversationId !== conversationId) return
+
+    setMessages((prev) =>
+      prev.map((msg) => {
+        if (readEvent.messageIds.includes(msg.id)) {
+          const existingReads = msg.reads || []
+          if (!existingReads.some((r) => r.userId === readEvent.readerId)) {
+            return {
+              ...msg,
+              reads: [
+                ...existingReads,
+                {
+                  userId: readEvent.readerId,
+                  userName: readEvent.readerName,
+                  fullName: readEvent.readerName,
+                  readAt: readEvent.readAt,
+                },
+              ],
+            }
+          }
+        }
+        return msg
+      })
+    )
+  }, [readEvent, conversationId])
 
   // Load conversation messages
   useEffect(() => {
@@ -255,6 +292,7 @@ export default function ConversationPage() {
         fileSize: a.fileSize,
       })),
       reactions: [],
+      reads: [],
     }
 
     setMessages((prev) => [...prev, tempMessage])
@@ -395,6 +433,12 @@ export default function ConversationPage() {
                       const timeStr = formatMessageTime(message.sentAt)
                       const attachments = message.attachments || []
 
+                      // Filter other readers (excluding myself)
+                      const readers = (message.reads || []).filter(
+                        (r) => r.userId && r.userId !== currentUser?.userId && r.fullName !== currentUser?.fullName
+                      )
+                      const isReadByOthers = readers.length > 0
+
                       const imageAttachments = attachments.filter((a) => {
                         const url = a.fileUrl.toLowerCase()
                         const type = (a.fileType || "").toLowerCase()
@@ -415,7 +459,7 @@ export default function ConversationPage() {
                         <Message
                           key={message.id}
                           align={isOwn ? "end" : "start"}
-                          className="mb-5"
+                          className="mb-4"
                         >
                           <MessageAvatar className="size-8 border bg-card text-xs font-semibold shrink-0">
                             <span className="sr-only">{isOwn ? "Bạn" : message.senderName}</span>
@@ -424,9 +468,20 @@ export default function ConversationPage() {
                               : (message.senderName ? message.senderName.substring(0, 2).toUpperCase() : <User className="size-4" />)}
                           </MessageAvatar>
                           <div className={isOwn ? "flex flex-col items-end max-w-[80%]" : "flex flex-col items-start max-w-[80%]"}>
-                            <div className="mb-1 flex items-center gap-2 px-1 text-[11px] text-muted-foreground">
+                            <div className="mb-1 flex items-center gap-1.5 px-1 text-[11px] text-muted-foreground">
                               <span className="font-medium">{isOwn ? "Bạn" : message.senderName}</span>
                               {timeStr && <span>{timeStr}</span>}
+
+                              {/* Message Status Tick (For sender) */}
+                              {isOwn && (
+                                <span className="inline-flex items-center ml-0.5" title={isReadByOthers ? "Đã đọc" : "Đã gửi"}>
+                                  {isReadByOthers ? (
+                                    <CheckCheck className="size-3.5 text-emerald-500 font-bold" />
+                                  ) : (
+                                    <Check className="size-3 text-muted-foreground" />
+                                  )}
+                                </span>
+                              )}
                             </div>
 
                             <MessageContent
@@ -542,6 +597,55 @@ export default function ConversationPage() {
                                 </div>
                               )}
                             </MessageContent>
+
+                            {/* Small Reader Avatars Stack (When Read) */}
+                            {isOwn && isReadByOthers && (
+                              <div className="mt-1 flex items-center justify-end gap-1 px-1">
+                                {readers.length === 1 && (
+                                  <div
+                                    title={`Đã xem bởi: ${readers[0].fullName || readers[0].userName}`}
+                                    className="flex size-4 items-center justify-center rounded-full bg-emerald-100 text-emerald-800 text-[8px] font-bold border border-background shadow-xs ring-1 ring-emerald-500/30"
+                                  >
+                                    {(readers[0].fullName || readers[0].userName || "U").substring(0, 2).toUpperCase()}
+                                  </div>
+                                )}
+
+                                {readers.length === 2 && (
+                                  <div className="flex items-center -space-x-1.5">
+                                    {readers.map((r, i) => (
+                                      <div
+                                        key={r.userId || i}
+                                        title={`Đã xem bởi: ${r.fullName || r.userName}`}
+                                        className="flex size-4 items-center justify-center rounded-full bg-emerald-100 text-emerald-800 text-[8px] font-bold border border-background shadow-xs ring-1 ring-emerald-500/30"
+                                      >
+                                        {(r.fullName || r.userName || "U").substring(0, 2).toUpperCase()}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {readers.length > 2 && (
+                                  <div
+                                    title={`Đã xem bởi: ${readers.map((r) => r.fullName || r.userName).join(", ")}`}
+                                    className="flex items-center gap-1"
+                                  >
+                                    <div className="flex items-center -space-x-1.5">
+                                      {readers.slice(-2).map((r, i) => (
+                                        <div
+                                          key={r.userId || i}
+                                          className="flex size-4 items-center justify-center rounded-full bg-emerald-100 text-emerald-800 text-[8px] font-bold border border-background shadow-xs ring-1 ring-emerald-500/30"
+                                        >
+                                          {(r.fullName || r.userName || "U").substring(0, 2).toUpperCase()}
+                                        </div>
+                                      ))}
+                                    </div>
+                                    <span className="flex items-center justify-center rounded-full bg-emerald-500/10 px-1 py-0.2 text-[8px] font-semibold text-emerald-600 border border-emerald-500/20">
+                                      +{readers.length - 2}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
                         </Message>
                       )

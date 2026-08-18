@@ -32,6 +32,23 @@ export interface MessageResponse {
   sentAt: string
   attachments: AttachmentResponse[]
   reactions: ReactionResponse[]
+  reads?: MessageReadResponse[]
+}
+
+export interface MessageReadResponse {
+  userId: string
+  userName: string
+  fullName: string
+  avatarUrl?: string
+  readAt: string
+}
+
+export interface MessagesReadEvent {
+  conversationId: string
+  readerId: string
+  readerName: string
+  messageIds: string[]
+  readAt: string
 }
 
 export interface AttachmentResponse {
