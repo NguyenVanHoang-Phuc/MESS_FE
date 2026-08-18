@@ -16,8 +16,11 @@ import {
   Film,
   ImageIcon,
   Loader2,
+  MoreHorizontal,
   Paperclip,
+  Smile,
   Trash2,
+  Undo2,
   Upload,
   User,
   X,
@@ -28,11 +31,13 @@ import { Button } from "@/components/ui/button"
 import { Message, MessageAvatar, MessageContent, MessageGroup } from "@/components/ui/message"
 import { MessageScroller, MessageScrollerContent, MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport } from "@/components/ui/message-scroller"
 import { useSignalR } from "@/hooks/useSignalR"
-import { getMessages, markConversationAsReadApi, sendMessageApi, uploadFilesApi } from "@/services/api/chat"
+import { getMessages, markConversationAsReadApi, reactMessageApi, recallMessageApi, sendMessageApi, uploadFilesApi } from "@/services/api/chat"
 import { getCurrentUser } from "@/services/api/auth"
 import { formatFileSize, formatMessageTime } from "@/utils/formatters"
 import { cn } from "@/utils/cn"
-import type { AttachmentInput, AttachmentResponse, MessageResponse } from "@/types/chat"
+import type { AttachmentInput, AttachmentResponse, MessageResponse, ReactionResponse } from "@/types/chat"
+
+const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "😡"]
 
 interface SelectedFileItem {
   id: string
@@ -56,13 +61,23 @@ export default function ConversationPage() {
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
-  const { incomingMessage, readEvent } = useSignalR(conversationId)
+  const { incomingMessage, readEvent, recalledEvent, reactionEvent } = useSignalR(conversationId)
   const [currentUser, setCurrentUser] = useState<any>(null)
+  const [hiddenMessageIds, setHiddenMessageIds] = useState<string[]>([])
+  const [recallingMessageId, setRecallingMessageId] = useState<string | null>(null)
+  const [confirmRecallId, setConfirmRecallId] = useState<string | null>(null)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
   useEffect(() => {
     const user = getCurrentUser()
     if (user) setCurrentUser(user)
-  }, [])
+    if (conversationId) {
+      try {
+        const saved = localStorage.getItem(`hidden_messages_${conversationId}`)
+        if (saved) setHiddenMessageIds(JSON.parse(saved))
+      } catch {}
+    }
+  }, [conversationId])
 
   // Mark conversation as read on load and when receiving new message
   useEffect(() => {
@@ -134,6 +149,32 @@ export default function ConversationPage() {
     )
   }, [readEvent, conversationId])
 
+  // Listen for real-time message recalled from SignalR (MES-007)
+  useEffect(() => {
+    if (!recalledEvent || recalledEvent.conversationId !== conversationId) return
+
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg.id === recalledEvent.messageId
+          ? { ...msg, isRecalled: true, content: undefined, attachments: [] }
+          : msg
+      )
+    )
+  }, [recalledEvent, conversationId])
+
+  // Listen for real-time reactions from SignalR (MES-008)
+  useEffect(() => {
+    if (!reactionEvent || reactionEvent.conversationId !== conversationId) return
+
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg.id === reactionEvent.messageId
+          ? { ...msg, reactions: reactionEvent.reactions }
+          : msg
+      )
+    )
+  }, [reactionEvent, conversationId])
+
   // Load conversation messages
   useEffect(() => {
     async function load() {
@@ -145,6 +186,135 @@ export default function ConversationPage() {
     }
     load()
   }, [conversationId])
+
+  async function handleRecallMessage(messageId: string) {
+    setRecallingMessageId(messageId)
+    setConfirmRecallId(null)
+    try {
+      await recallMessageApi(messageId)
+      // Optimistically update
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === messageId
+            ? { ...m, isRecalled: true, content: undefined, attachments: [] }
+            : m
+        )
+      )
+    } catch (err: any) {
+      alert(err?.response?.data?.message || err?.message || "Không thể thu hồi tin nhắn.")
+    } finally {
+      setRecallingMessageId(null)
+    }
+  }
+
+  function handleDeleteForMe(messageId: string) {
+    const next = [...hiddenMessageIds, messageId]
+    setHiddenMessageIds(next)
+    try {
+      localStorage.setItem(`hidden_messages_${conversationId}`, JSON.stringify(next))
+    } catch {}
+  }
+
+  async function handleReact(messageId: string, emoji: string) {
+    // Optimistic toggle
+    setMessages((prev) =>
+      prev.map((msg) => {
+        if (msg.id !== messageId) return msg
+        const curReactions = msg.reactions || []
+        const myName = currentUser?.fullName || "Bạn"
+        const myId = currentUser?.userId || ""
+
+        const existingReaction = curReactions.find((r) =>
+          (myId && r.userIds?.includes(myId)) || r.userNames.includes(myName)
+        )
+
+        let updated: ReactionResponse[] = []
+        if (existingReaction) {
+          if (existingReaction.emoji === emoji) {
+            // Remove
+            updated = curReactions
+              .map((r) =>
+                r.emoji === emoji
+                  ? {
+                      ...r,
+                      count: r.count - 1,
+                      userNames: r.userNames.filter((n) => n !== myName),
+                      userIds: r.userIds?.filter((id) => id !== myId),
+                    }
+                  : r
+              )
+              .filter((r) => r.count > 0)
+          } else {
+            // Switch emoji
+            const withoutOld = curReactions
+              .map((r) =>
+                r.emoji === existingReaction.emoji
+                  ? {
+                      ...r,
+                      count: r.count - 1,
+                      userNames: r.userNames.filter((n) => n !== myName),
+                      userIds: r.userIds?.filter((id) => id !== myId),
+                    }
+                  : r
+              )
+              .filter((r) => r.count > 0)
+
+            const targetIdx = withoutOld.findIndex((r) => r.emoji === emoji)
+            if (targetIdx !== -1) {
+              updated = withoutOld.map((r, i) =>
+                i === targetIdx
+                  ? {
+                      ...r,
+                      count: r.count + 1,
+                      userNames: [...r.userNames, myName],
+                      userIds: myId ? [...(r.userIds || []), myId] : r.userIds,
+                    }
+                  : r
+              )
+            } else {
+              updated = [
+                ...withoutOld,
+                { emoji, count: 1, userNames: [myName], userIds: myId ? [myId] : [] },
+              ]
+            }
+          }
+        } else {
+          // Add new
+          const targetIdx = curReactions.findIndex((r) => r.emoji === emoji)
+          if (targetIdx !== -1) {
+            updated = curReactions.map((r, i) =>
+              i === targetIdx
+                ? {
+                    ...r,
+                    count: r.count + 1,
+                    userNames: [...r.userNames, myName],
+                    userIds: myId ? [...(r.userIds || []), myId] : r.userIds,
+                  }
+                : r
+            )
+          } else {
+            updated = [
+              ...curReactions,
+              { emoji, count: 1, userNames: [myName], userIds: myId ? [myId] : [] },
+            ]
+          }
+        }
+
+        return { ...msg, reactions: updated }
+      })
+    )
+
+    try {
+      const serverReactions = await reactMessageApi(messageId, emoji)
+      if (serverReactions) {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === messageId ? { ...m, reactions: serverReactions } : m))
+        )
+      }
+    } catch (err) {
+      console.error("Failed to react to message", err)
+    }
+  }
 
   function determineFileType(file: File): "image" | "video" | "audio" | "doc" {
     if (file.type.startsWith("image/")) return "image"
@@ -414,9 +584,9 @@ export default function ConversationPage() {
 
         {/* Messages List Area */}
         <MessageScroller className="min-h-0 flex-1">
-          <MessageScrollerViewport>
+          <MessageScrollerViewport className="p-4 sm:p-6">
             <MessageScrollerContent className="mx-auto w-full max-w-3xl px-4 py-8 md:px-8">
-              {messages.length === 0 ? (
+              {messages.filter((m) => !hiddenMessageIds.includes(m.id)).length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
                   <p className="text-sm font-medium">Chưa có tin nhắn nào trong hội thoại này.</p>
                   <p className="mt-1 text-xs">Hãy gửi tin nhắn hoặc đính kèm tài liệu đầu tiên để bắt đầu trò chuyện!</p>
@@ -424,11 +594,13 @@ export default function ConversationPage() {
               ) : (
                 <MessageScrollerItem>
                   <MessageGroup>
-                    {messages.map((message) => {
-                      const isOwn =
-                        Boolean(currentUser?.userId && message.senderId === currentUser.userId) ||
-                        message.senderName === "Tôi" ||
-                        message.senderName === currentUser?.fullName
+                    {messages
+                      .filter((m) => !hiddenMessageIds.includes(m.id))
+                      .map((message) => {
+                        const isOwn =
+                          Boolean(currentUser?.userId && message.senderId === currentUser.userId) ||
+                          message.senderName === "Tôi" ||
+                          message.senderName === currentUser?.fullName
 
                       const timeStr = formatMessageTime(message.sentAt)
                       const attachments = message.attachments || []
@@ -459,7 +631,7 @@ export default function ConversationPage() {
                         <Message
                           key={message.id}
                           align={isOwn ? "end" : "start"}
-                          className="mb-4"
+                          className="mb-4 group/msg relative"
                         >
                           <MessageAvatar className="size-8 border bg-card text-xs font-semibold shrink-0">
                             <span className="sr-only">{isOwn ? "Bạn" : message.senderName}</span>
@@ -467,13 +639,13 @@ export default function ConversationPage() {
                               ? (currentUser?.fullName ? currentUser.fullName.substring(0, 2).toUpperCase() : "AN")
                               : (message.senderName ? message.senderName.substring(0, 2).toUpperCase() : <User className="size-4" />)}
                           </MessageAvatar>
-                          <div className={isOwn ? "flex flex-col items-end max-w-[80%]" : "flex flex-col items-start max-w-[80%]"}>
+                          <div className={isOwn ? "flex flex-col items-end max-w-[80%] relative" : "flex flex-col items-start max-w-[80%] relative"}>
                             <div className="mb-1 flex items-center gap-1.5 px-1 text-[11px] text-muted-foreground">
                               <span className="font-medium">{isOwn ? "Bạn" : message.senderName}</span>
                               {timeStr && <span>{timeStr}</span>}
 
                               {/* Message Status Tick (For sender) */}
-                              {isOwn && (
+                              {isOwn && !message.isRecalled && (
                                 <span className="inline-flex items-center ml-0.5" title={isReadByOthers ? "Đã đọc" : "Đã gửi"}>
                                   {isReadByOthers ? (
                                     <CheckCheck className="size-3.5 text-emerald-500 font-bold" />
@@ -484,119 +656,320 @@ export default function ConversationPage() {
                               )}
                             </div>
 
-                            <MessageContent
-                              className={cn(
-                                "flex flex-col gap-2 p-3 shadow-sm",
-                                isOwn
-                                  ? "rounded-2xl rounded-tr-sm bg-primary text-primary-foreground"
-                                  : "rounded-2xl rounded-tl-sm border bg-card text-card-foreground"
-                              )}
-                            >
-                              {/* Text content if present */}
-                              {message.content && (
-                                <p className="leading-relaxed whitespace-pre-wrap text-sm">{message.content}</p>
-                              )}
+                            {/* Recalled Message State */}
+                            {message.isRecalled ? (
+                              <div className="relative group/bubble">
+                                <div className="flex items-center gap-2 italic text-muted-foreground text-xs py-2 px-3.5 rounded-2xl border border-dashed border-muted-foreground/30 bg-muted/20 shadow-2xs">
+                                  <Undo2 className="size-3.5 opacity-60 shrink-0" />
+                                  <span>Tin nhắn đã được thu hồi</span>
+                                </div>
 
-                              {/* Images Gallery */}
-                              {imageAttachments.length > 0 && (
+                                {/* Delete button on recalled message */}
                                 <div
                                   className={cn(
-                                    "grid gap-2 overflow-hidden rounded-xl",
-                                    imageAttachments.length === 1
-                                      ? "grid-cols-1"
-                                      : imageAttachments.length === 2
-                                      ? "grid-cols-2"
-                                      : "grid-cols-2 sm:grid-cols-3"
+                                    "absolute -top-7.5 z-20 flex items-center rounded-full border bg-card/95 p-1 shadow-md opacity-0 group-hover/msg:opacity-100 transition duration-150 backdrop-blur-xs",
+                                    isOwn ? "right-0" : "left-0"
                                   )}
                                 >
-                                  {imageAttachments.map((img, idx) => {
-                                    const fullUrl = getFileFullUrl(img.fileUrl)
-                                    return (
-                                      <div
-                                        key={img.id || idx}
-                                        onClick={() => setActiveLightboxImage(fullUrl)}
-                                        className="group relative cursor-pointer overflow-hidden rounded-lg bg-black/5"
-                                      >
-                                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                                        <img
-                                          src={fullUrl}
-                                          alt={img.fileName || "Ảnh đính kèm"}
-                                          className="h-44 w-full object-cover transition duration-300 group-hover:scale-105"
-                                        />
-                                        <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 transition group-hover:opacity-100">
-                                          <ZoomIn className="size-6 text-white" />
-                                        </div>
-                                      </div>
-                                    )
-                                  })}
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmDeleteId(message.id)}
+                                    className="size-6 flex items-center justify-center rounded-full text-muted-foreground hover:text-foreground hover:bg-muted transition duration-100"
+                                    title="Xóa ở phía tôi"
+                                  >
+                                    <Trash2 className="size-3.5" />
+                                  </button>
                                 </div>
-                              )}
 
-                              {/* Videos Player */}
-                              {videoAttachments.length > 0 && (
-                                <div className="space-y-2">
-                                  {videoAttachments.map((vid, idx) => (
-                                    <div key={vid.id || idx} className="overflow-hidden rounded-xl bg-black">
-                                      <video
-                                        controls
-                                        src={getFileFullUrl(vid.fileUrl)}
-                                        className="max-h-64 w-full rounded-xl"
-                                      />
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-
-                              {/* Document & Files Attachments */}
-                              {docAttachments.length > 0 && (
-                                <div className="space-y-1.5 w-full">
-                                  {docAttachments.map((doc, idx) => {
-                                    const fullUrl = getFileFullUrl(doc.fileUrl)
-                                    return (
-                                      <div
-                                        key={doc.id || idx}
-                                        className={cn(
-                                          "flex items-center justify-between gap-3 rounded-xl p-2.5 transition",
-                                          isOwn
-                                            ? "bg-primary-foreground/10 text-primary-foreground hover:bg-primary-foreground/20"
-                                            : "bg-muted/70 text-foreground hover:bg-muted"
-                                        )}
-                                      >
-                                        <div className="flex items-center gap-2.5 min-w-0">
-                                          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-background/80 shadow-xs">
-                                            {renderDocumentIcon(doc.fileName)}
-                                          </div>
-                                          <div className="min-w-0">
-                                            <p className="truncate text-xs font-medium">{doc.fileName}</p>
-                                            {doc.fileSize && (
-                                              <p className={cn("text-[10px]", isOwn ? "text-primary-foreground/70" : "text-muted-foreground")}>
-                                                {formatFileSize(doc.fileSize)}
-                                              </p>
-                                            )}
-                                          </div>
-                                        </div>
-
-                                        <a
-                                          href={fullUrl}
-                                          download={doc.fileName}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                          title={`Tải xuống ${doc.fileName}`}
-                                          className={cn(
-                                            "flex size-8 shrink-0 items-center justify-center rounded-lg transition",
-                                            isOwn
-                                              ? "hover:bg-primary-foreground/20 text-primary-foreground"
-                                              : "hover:bg-accent text-primary"
-                                          )}
+                                {/* Delete Confirmation Popover for Recalled message */}
+                                {confirmDeleteId === message.id && (
+                                  <div className="absolute inset-0 z-30 flex items-center justify-center rounded-2xl bg-background/95 backdrop-blur-xs border p-3 shadow-lg animate-in zoom-in-95 duration-150">
+                                    <div className="text-center space-y-2">
+                                      <p className="text-xs font-semibold text-foreground">Xóa tin nhắn ở phía bạn?</p>
+                                      <p className="text-[10px] text-muted-foreground">Tin nhắn này sẽ bị ẩn khỏi thiết bị của bạn.</p>
+                                      <div className="flex items-center justify-center gap-2 pt-1">
+                                        <button
+                                          type="button"
+                                          onClick={() => setConfirmDeleteId(null)}
+                                          className="rounded-lg border px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted"
                                         >
-                                          <Download className="size-4" />
-                                        </a>
+                                          Hủy
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            handleDeleteForMe(message.id)
+                                            setConfirmDeleteId(null)
+                                          }}
+                                          className="rounded-lg bg-destructive text-destructive-foreground px-2.5 py-1 text-[11px] font-medium hover:bg-destructive/90 transition flex items-center gap-1"
+                                        >
+                                          <Trash2 className="size-3" />
+                                          Xóa
+                                        </button>
                                       </div>
-                                    )
-                                  })}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              /* Normal Message Content Container with Actions */
+                              <div className="relative group/bubble">
+                                {/* Floating Action Bar on Hover (MES-007 & MES-008) */}
+                                <div
+                                  className={cn(
+                                    "absolute -top-9.5 z-20 flex items-center gap-0.5 rounded-full border bg-card/95 p-1 shadow-md opacity-0 group-hover/msg:opacity-100 transition duration-150 backdrop-blur-xs",
+                                    isOwn ? "right-0" : "left-0"
+                                  )}
+                                >
+                                  {/* Quick Reaction Emojis (MES-008) */}
+                                  <div className="flex items-center gap-0.5 px-1">
+                                    {QUICK_REACTIONS.map((emoji) => (
+                                      <button
+                                        key={emoji}
+                                        type="button"
+                                        onClick={() => handleReact(message.id, emoji)}
+                                        className="size-6.5 flex items-center justify-center rounded-full hover:scale-125 hover:bg-muted text-xs transition duration-100 cursor-pointer"
+                                        title={`Thả ${emoji}`}
+                                      >
+                                        {emoji}
+                                      </button>
+                                    ))}
+                                  </div>
+
+                                  <div className="h-4 w-px bg-border mx-0.5" />
+
+                                  {/* Recall Action (MES-007) - Sender only */}
+                                  {isOwn && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setConfirmRecallId(message.id)}
+                                      className="size-6.5 flex items-center justify-center rounded-full text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition duration-100"
+                                      title="Thu hồi tin nhắn với mọi người"
+                                    >
+                                      <Undo2 className="size-3.5" />
+                                    </button>
+                                  )}
+
+                                  {/* Delete for Me Action (MES-007) */}
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmDeleteId(message.id)}
+                                    className="size-6.5 flex items-center justify-center rounded-full text-muted-foreground hover:text-foreground hover:bg-muted transition duration-100"
+                                    title="Xóa ở phía tôi"
+                                  >
+                                    <Trash2 className="size-3.5" />
+                                  </button>
                                 </div>
-                              )}
-                            </MessageContent>
+
+                                {/* Recall Confirmation Modal / Popover */}
+                                {confirmRecallId === message.id && (
+                                  <div className="absolute inset-0 z-30 flex items-center justify-center rounded-2xl bg-background/95 backdrop-blur-xs border p-3 shadow-lg animate-in zoom-in-95 duration-150">
+                                    <div className="text-center space-y-2">
+                                      <p className="text-xs font-semibold text-foreground">Thu hồi tin nhắn này?</p>
+                                      <p className="text-[10px] text-muted-foreground">Tin nhắn sẽ bị thu hồi với tất cả thành viên trong cuộc trò chuyện.</p>
+                                      <div className="flex items-center justify-center gap-2 pt-1">
+                                        <button
+                                          type="button"
+                                          onClick={() => setConfirmRecallId(null)}
+                                          className="rounded-lg border px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted"
+                                        >
+                                          Hủy
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleRecallMessage(message.id)}
+                                          disabled={recallingMessageId === message.id}
+                                          className="rounded-lg bg-destructive text-destructive-foreground px-2.5 py-1 text-[11px] font-medium hover:bg-destructive/90 transition flex items-center gap-1"
+                                        >
+                                          {recallingMessageId === message.id ? (
+                                            <Loader2 className="size-3 animate-spin" />
+                                          ) : (
+                                            <Undo2 className="size-3" />
+                                          )}
+                                          Thu hồi
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Delete for Me Confirmation Modal / Popover */}
+                                {confirmDeleteId === message.id && (
+                                  <div className="absolute inset-0 z-30 flex items-center justify-center rounded-2xl bg-background/95 backdrop-blur-xs border p-3 shadow-lg animate-in zoom-in-95 duration-150">
+                                    <div className="text-center space-y-2">
+                                      <p className="text-xs font-semibold text-foreground">Xóa tin nhắn ở phía bạn?</p>
+                                      <p className="text-[10px] text-muted-foreground">Tin nhắn này sẽ bị ẩn khỏi thiết bị của bạn nhưng vẫn hiển thị với các thành viên khác.</p>
+                                      <div className="flex items-center justify-center gap-2 pt-1">
+                                        <button
+                                          type="button"
+                                          onClick={() => setConfirmDeleteId(null)}
+                                          className="rounded-lg border px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted"
+                                        >
+                                          Hủy
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            handleDeleteForMe(message.id)
+                                            setConfirmDeleteId(null)
+                                          }}
+                                          className="rounded-lg bg-destructive text-destructive-foreground px-2.5 py-1 text-[11px] font-medium hover:bg-destructive/90 transition flex items-center gap-1"
+                                        >
+                                          <Trash2 className="size-3" />
+                                          Xóa
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+
+                                <MessageContent
+                                  className={cn(
+                                    "flex flex-col gap-2 p-3 shadow-sm",
+                                    isOwn
+                                      ? "rounded-2xl rounded-tr-sm bg-primary text-primary-foreground"
+                                      : "rounded-2xl rounded-tl-sm border bg-card text-card-foreground"
+                                  )}
+                                >
+                                  {/* Text content if present */}
+                                  {message.content && (
+                                    <p className="leading-relaxed whitespace-pre-wrap text-sm">{message.content}</p>
+                                  )}
+
+                                  {/* Images Gallery */}
+                                  {imageAttachments.length > 0 && (
+                                    <div
+                                      className={cn(
+                                        "grid gap-2 overflow-hidden rounded-xl",
+                                        imageAttachments.length === 1
+                                          ? "grid-cols-1"
+                                          : imageAttachments.length === 2
+                                          ? "grid-cols-2"
+                                          : "grid-cols-2 sm:grid-cols-3"
+                                      )}
+                                    >
+                                      {imageAttachments.map((img, idx) => {
+                                        const fullUrl = getFileFullUrl(img.fileUrl)
+                                        return (
+                                          <div
+                                            key={img.id || idx}
+                                            onClick={() => setActiveLightboxImage(fullUrl)}
+                                            className="group relative cursor-pointer overflow-hidden rounded-lg bg-black/5"
+                                          >
+                                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                                            <img
+                                              src={fullUrl}
+                                              alt={img.fileName || "Ảnh đính kèm"}
+                                              className="h-44 w-full object-cover transition duration-300 group-hover:scale-105"
+                                            />
+                                            <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 transition group-hover:opacity-100">
+                                              <ZoomIn className="size-6 text-white" />
+                                            </div>
+                                          </div>
+                                        )
+                                      })}
+                                    </div>
+                                  )}
+
+                                  {/* Videos Player */}
+                                  {videoAttachments.length > 0 && (
+                                    <div className="space-y-2">
+                                      {videoAttachments.map((vid, idx) => (
+                                        <div key={vid.id || idx} className="overflow-hidden rounded-xl bg-black">
+                                          <video
+                                            controls
+                                            src={getFileFullUrl(vid.fileUrl)}
+                                            className="max-h-64 w-full rounded-xl"
+                                          />
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+
+                                  {/* Document & Files Attachments */}
+                                  {docAttachments.length > 0 && (
+                                    <div className="space-y-1.5 w-full">
+                                      {docAttachments.map((doc, idx) => {
+                                        const fullUrl = getFileFullUrl(doc.fileUrl)
+                                        return (
+                                          <div
+                                            key={doc.id || idx}
+                                            className={cn(
+                                              "flex items-center justify-between gap-3 rounded-xl p-2.5 transition",
+                                              isOwn
+                                                ? "bg-primary-foreground/10 text-primary-foreground hover:bg-primary-foreground/20"
+                                                : "bg-muted/70 text-foreground hover:bg-muted"
+                                            )}
+                                          >
+                                            <div className="flex items-center gap-2.5 min-w-0">
+                                              <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-background/80 shadow-xs">
+                                                {renderDocumentIcon(doc.fileName)}
+                                              </div>
+                                              <div className="min-w-0">
+                                                <p className="truncate text-xs font-medium">{doc.fileName}</p>
+                                                {doc.fileSize && (
+                                                  <p className={cn("text-[10px]", isOwn ? "text-primary-foreground/70" : "text-muted-foreground")}>
+                                                    {formatFileSize(doc.fileSize)}
+                                                  </p>
+                                                )}
+                                              </div>
+                                            </div>
+
+                                            <a
+                                              href={fullUrl}
+                                              download={doc.fileName}
+                                              target="_blank"
+                                              rel="noreferrer"
+                                              title={`Tải xuống ${doc.fileName}`}
+                                              className={cn(
+                                                "flex size-8 shrink-0 items-center justify-center rounded-lg transition",
+                                                isOwn
+                                                  ? "hover:bg-primary-foreground/20 text-primary-foreground"
+                                                  : "hover:bg-accent text-primary"
+                                              )}
+                                            >
+                                              <Download className="size-4" />
+                                            </a>
+                                          </div>
+                                        )
+                                      })}
+                                    </div>
+                                  )}
+                                </MessageContent>
+                              </div>
+                            )}
+
+                            {/* Message Reactions Badges Row (MES-008) */}
+                            {message.reactions && message.reactions.length > 0 && (
+                              <div className={cn("flex flex-wrap items-center gap-1 mt-1 z-10", isOwn ? "justify-end" : "justify-start")}>
+                                {message.reactions.map((r, rIdx) => {
+                                  const myId = currentUser?.userId || ""
+                                  const myName = currentUser?.fullName || ""
+                                  const hasReacted = Boolean(
+                                    (myId && r.userIds?.includes(myId)) ||
+                                    (myName && r.userNames?.includes(myName))
+                                  )
+
+                                  return (
+                                    <button
+                                      key={rIdx}
+                                      type="button"
+                                      onClick={() => handleReact(message.id, r.emoji)}
+                                      title={`${r.userNames.join(', ')} đã thả ${r.emoji}`}
+                                      className={cn(
+                                        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs transition border shadow-2xs cursor-pointer select-none",
+                                        hasReacted
+                                          ? "border-primary/40 bg-primary/15 font-semibold text-primary"
+                                          : "border-border bg-card hover:bg-muted text-foreground"
+                                      )}
+                                    >
+                                      <span>{r.emoji}</span>
+                                      <span className="text-[10px] font-medium">{r.count}</span>
+                                    </button>
+                                  )
+                                })}
+                              </div>
+                            )}
 
                             {/* Small Reader Avatars Stack (When Read) */}
                             {isOwn && isReadByOthers && (

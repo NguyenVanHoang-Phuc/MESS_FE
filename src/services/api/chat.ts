@@ -350,3 +350,35 @@ export async function searchMessagesApi(
   }
 }
 
+export async function recallMessageApi(
+  messageId: string
+): Promise<import('@/types/chat').MessageResponse | null> {
+  try {
+    const response = await api.post<any>(`/messages/${messageId}/recall`)
+    if (response.data?.success && response.data.data) {
+      return response.data.data
+    }
+    return null
+  } catch (error) {
+    console.error(`Failed to recall message ${messageId}`, error)
+    throw error
+  }
+}
+
+export async function reactMessageApi(
+  messageId: string,
+  emoji: string
+): Promise<import('@/types/chat').ReactionResponse[] | null> {
+  try {
+    const response = await api.post<any>(`/messages/${messageId}/react`, { emoji })
+    if (response.data?.success && response.data.data) {
+      return response.data.data
+    }
+    return null
+  } catch (error) {
+    console.error(`Failed to react to message ${messageId}`, error)
+    throw error
+  }
+}
+
+

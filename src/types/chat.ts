@@ -78,6 +78,18 @@ export interface ReactionResponse {
   emoji: string
   count: number
   userNames: string[]
+  userIds?: string[]
+}
+
+export interface MessageRecalledEvent {
+  conversationId: string
+  messageId: string
+}
+
+export interface MessageReactionEvent {
+  conversationId: string
+  messageId: string
+  reactions: ReactionResponse[]
 }
 
 export interface UserSummaryResponse {
