@@ -31,10 +31,10 @@ export default function HomePage() {
           </Link>
           <Link
             id="home-cta-chat"
-            href="/chat/marketing-plan"
+            href="/chat"
             className="px-6 py-3 bg-purple-600 text-white font-semibold rounded-xl hover:bg-purple-700 transition-colors shadow-md"
           >
-            Mở Nexus AI ✨
+            Mở Nexus Chat ✨
           </Link>
           <Link
             id="home-cta-login"
