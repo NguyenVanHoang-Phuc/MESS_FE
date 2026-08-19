@@ -218,28 +218,45 @@ export async function markConversationAsReadApi(conversationId: string): Promise
   }
 }
 
-export async function getMessages(conversationId: string): Promise<MessageResponse[]> {
+export async function getMessages(
+  conversationId: string,
+  beforeCursor?: string | null,
+  limit: number = 30
+): Promise<import('@/types/chat').CursorPaginatedMessagesResponse> {
   try {
-    const response = await api.get<any>(`/messages/${conversationId}`)
+    const params: Record<string, any> = { limit }
+    if (beforeCursor) params.beforeCursor = beforeCursor
+
+    const response = await api.get<any>(`/messages/${conversationId}`, { params })
     const data = response.data?.data
     let list: MessageResponse[] = []
+    let nextCursor: string | null = null
+    let hasMore = false
+    let totalCount = 0
 
     if (data?.items && Array.isArray(data.items)) {
       list = data.items
+      nextCursor = data.nextCursor || null
+      hasMore = Boolean(data.hasMore)
+      totalCount = data.totalCount || data.items.length
     } else if (Array.isArray(data)) {
       list = data
+      totalCount = data.length
     } else if (fallbackMessagesMap[conversationId]) {
       list = fallbackMessagesMap[conversationId]
+      totalCount = list.length
     }
 
     // Always ensure chronological order: oldest at top, newest at bottom
-    return list.sort((a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime())
+    const sorted = list.sort((a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime())
+    return { items: sorted, nextCursor, hasMore, totalCount }
   } catch (error) {
     console.warn(`Cannot fetch messages for ${conversationId}, checking fallback:`, error)
     if (fallbackMessagesMap[conversationId]) {
-      return fallbackMessagesMap[conversationId].sort((a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime())
+      const sorted = fallbackMessagesMap[conversationId].sort((a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime())
+      return { items: sorted, nextCursor: null, hasMore: false, totalCount: sorted.length }
     }
-    return []
+    return { items: [], nextCursor: null, hasMore: false, totalCount: 0 }
   }
 }
 

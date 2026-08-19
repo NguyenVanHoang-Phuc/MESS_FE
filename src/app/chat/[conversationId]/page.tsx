@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useState, useRef, ChangeEvent, DragEvent, ClipboardEvent } from "react"
 import {
   AlertCircle,
+  ArrowDown,
   ArrowUp,
   Check,
   CheckCheck,
@@ -27,6 +28,7 @@ import {
   ZoomIn,
 } from "lucide-react"
 import { useParams } from "next/navigation"
+import { useVirtualizer } from "@tanstack/react-virtual"
 import { Button } from "@/components/ui/button"
 import { Message, MessageAvatar, MessageContent, MessageGroup } from "@/components/ui/message"
 import { MessageScroller, MessageScrollerContent, MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport } from "@/components/ui/message-scroller"
@@ -67,6 +69,36 @@ export default function ConversationPage() {
   const [recallingMessageId, setRecallingMessageId] = useState<string | null>(null)
   const [confirmRecallId, setConfirmRecallId] = useState<string | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+
+  // Cursor Pagination States (Performance Optimization)
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [hasMore, setHasMore] = useState<boolean>(false)
+  const [isLoadingOlder, setIsLoadingOlder] = useState<boolean>(false)
+  const viewportRef = useRef<HTMLDivElement>(null)
+  const [isAtBottom, setIsAtBottom] = useState(true)
+  const [newMessageCount, setNewMessageCount] = useState(0)
+
+  const visibleMessages = messages.filter((m) => !hiddenMessageIds.includes(m.id))
+
+  // Virtualized List (Windowing for high performance 60fps rendering)
+  const rowVirtualizer = useVirtualizer({
+    count: visibleMessages.length,
+    getScrollElement: () => viewportRef.current,
+    estimateSize: () => 90,
+    overscan: 8,
+  })
+
+  // Scroll to the very last message
+  function scrollToBottom() {
+    if (visibleMessages.length > 0) {
+      rowVirtualizer.scrollToIndex(visibleMessages.length - 1, { align: 'end', behavior: 'smooth' })
+    } else {
+      const el = viewportRef.current
+      if (el) el.scrollTop = el.scrollHeight
+    }
+    setIsAtBottom(true)
+    setNewMessageCount(0)
+  }
 
   useEffect(() => {
     const user = getCurrentUser()
@@ -175,17 +207,88 @@ export default function ConversationPage() {
     )
   }, [reactionEvent, conversationId])
 
-  // Load conversation messages
+  // Load initial conversation messages via Cursor Pagination
   useEffect(() => {
     async function load() {
       if (!conversationId) return
       setLoading(true)
-      const data = await getMessages(conversationId)
-      setMessages(data)
+      setNewMessageCount(0)
+      setIsAtBottom(true)
+      const res = await getMessages(conversationId, null, 30)
+      setMessages(res.items)
+      setNextCursor(res.nextCursor || null)
+      setHasMore(res.hasMore)
       setLoading(false)
     }
     load()
   }, [conversationId])
+
+  // Auto-scroll to bottom after initial load
+  useEffect(() => {
+    if (!loading && visibleMessages.length > 0) {
+      // Small delay to let virtualizer measure items before scrolling
+      const t = setTimeout(() => {
+        rowVirtualizer.scrollToIndex(visibleMessages.length - 1, { align: 'end', behavior: 'auto' })
+      }, 60)
+      return () => clearTimeout(t)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading])
+
+  // When new message arrives via SignalR: scroll if at bottom, else show badge
+  useEffect(() => {
+    if (!incomingMessage || incomingMessage.conversationId !== conversationId) return
+    if (isAtBottom) {
+      const t = setTimeout(() => {
+        rowVirtualizer.scrollToIndex(visibleMessages.length - 1, { align: 'end', behavior: 'smooth' })
+      }, 30)
+      return () => clearTimeout(t)
+    } else {
+      setNewMessageCount((c) => c + 1)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incomingMessage])
+
+  // Load older historical messages on scroll up (Cursor Pagination)
+  async function handleLoadOlderMessages() {
+    if (!conversationId || !hasMore || isLoadingOlder || !nextCursor) return
+    setIsLoadingOlder(true)
+
+    // Snapshot: which item index was at the top of the visible area right now
+    const anchorIndex = rowVirtualizer.range?.startIndex ?? 0
+
+    try {
+      const res = await getMessages(conversationId, nextCursor, 30)
+      if (res.items.length > 0) {
+        // Calculate deduplicated new items BEFORE updating state
+        // so we know exactly how many items will be prepended
+        let newItemCount = 0
+        setMessages((prev) => {
+          const existingIds = new Set(prev.map((m) => m.id))
+          const newItems = res.items.filter((m) => !existingIds.has(m.id))
+          newItemCount = newItems.length
+          return [...newItems, ...prev]
+        })
+        setNextCursor(res.nextCursor || null)
+        setHasMore(res.hasMore)
+
+        // After React flushes the new items, restore scroll so the previously-visible
+        // item is still at the same position (pin anchor = anchorIndex + newItemCount)
+        requestAnimationFrame(() => {
+          rowVirtualizer.scrollToIndex(anchorIndex + newItemCount, {
+            align: 'start',
+            behavior: 'auto',
+          })
+        })
+      } else {
+        setHasMore(false)
+      }
+    } catch (err) {
+      console.error("Failed to load older messages", err)
+    } finally {
+      setIsLoadingOlder(false)
+    }
+  }
 
   async function handleRecallMessage(messageId: string) {
     setRecallingMessageId(messageId)
@@ -583,24 +686,95 @@ export default function ConversationPage() {
         )}
 
         {/* Messages List Area */}
-        <MessageScroller className="min-h-0 flex-1">
-          <MessageScrollerViewport className="p-4 sm:p-6">
+        <MessageScroller className="min-h-0 flex-1 relative">
+          {/* Floating Scroll-to-Bottom Button */}
+          {!isAtBottom && (
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 flex flex-col items-center gap-1 animate-in fade-in slide-in-from-bottom-2 duration-200">
+              <button
+                type="button"
+                onClick={scrollToBottom}
+                className="flex items-center gap-2 rounded-full border border-border bg-card/95 backdrop-blur-sm px-4 py-2 text-xs font-medium text-foreground shadow-lg hover:bg-muted transition cursor-pointer"
+              >
+                {newMessageCount > 0 ? (
+                  <span className="flex items-center gap-1.5">
+                    <span className="flex size-4 items-center justify-center rounded-full bg-primary text-primary-foreground text-[9px] font-bold">
+                      {newMessageCount > 9 ? '9+' : newMessageCount}
+                    </span>
+                    <span>Tin nhắn mới</span>
+                  </span>
+                ) : (
+                  <span>Tin nhắn mới nhất</span>
+                )}
+                <ArrowDown className="size-3.5" />
+              </button>
+            </div>
+          )}
+
+          <MessageScrollerViewport
+            ref={viewportRef}
+            onScroll={(e) => {
+              const target = e.currentTarget
+              // Detect scroll to bottom
+              const atBottom = target.scrollHeight - target.scrollTop - target.clientHeight < 60
+              setIsAtBottom(atBottom)
+              if (atBottom) setNewMessageCount(0)
+              // Load older on scroll to top
+              if (target.scrollTop < 60 && hasMore && !isLoadingOlder) {
+                handleLoadOlderMessages()
+              }
+            }}
+            className="p-4 sm:p-6"
+          >
             <MessageScrollerContent className="mx-auto w-full max-w-3xl px-4 py-8 md:px-8">
-              {messages.filter((m) => !hiddenMessageIds.includes(m.id)).length === 0 ? (
+              {visibleMessages.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
                   <p className="text-sm font-medium">Chưa có tin nhắn nào trong hội thoại này.</p>
                   <p className="mt-1 text-xs">Hãy gửi tin nhắn hoặc đính kèm tài liệu đầu tiên để bắt đầu trò chuyện!</p>
                 </div>
               ) : (
                 <MessageScrollerItem>
-                  <MessageGroup>
-                    {messages
-                      .filter((m) => !hiddenMessageIds.includes(m.id))
-                      .map((message) => {
-                        const isOwn =
-                          Boolean(currentUser?.userId && message.senderId === currentUser.userId) ||
-                          message.senderName === "Tôi" ||
-                          message.senderName === currentUser?.fullName
+                  {/* Older Messages Loader Banner (Cursor Pagination) */}
+                  {hasMore && (
+                    <div className="flex justify-center pb-4 pt-1">
+                      <button
+                        type="button"
+                        onClick={handleLoadOlderMessages}
+                        disabled={isLoadingOlder}
+                        className="flex items-center gap-1.5 rounded-full border border-border bg-card px-4 py-1.5 text-xs font-medium text-muted-foreground shadow-2xs hover:bg-muted hover:text-foreground transition disabled:opacity-50 cursor-pointer"
+                      >
+                        {isLoadingOlder ? (
+                          <>
+                            <Loader2 className="size-3.5 animate-spin text-primary" />
+                            <span>Đang tải tin nhắn cũ...</span>
+                          </>
+                        ) : (
+                          <span>Tải thêm tin nhắn cũ hơn</span>
+                        )}
+                      </button>
+                    </div>
+                  )}
+                  {!hasMore && visibleMessages.length > 25 && (
+                    <div className="flex justify-center pb-4 pt-1 text-[11px] text-muted-foreground/60 select-none">
+                      <span>Đã hiển thị toàn bộ lịch sử trò chuyện</span>
+                    </div>
+                  )}
+
+                  {/* Virtualized Message Windowing Container */}
+                  <div
+                    style={{
+                      height: `${rowVirtualizer.getTotalSize()}px`,
+                      width: "100%",
+                      position: "relative",
+                    }}
+                  >
+                    {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                      const message = visibleMessages[virtualRow.index]
+                      if (!message) return null
+
+                      const isOwn =
+                        Boolean(currentUser?.userId && message.senderId === currentUser.userId) ||
+                        message.senderName === "Tôi" ||
+                        message.senderName === currentUser?.fullName
 
                       const timeStr = formatMessageTime(message.sentAt)
                       const attachments = message.attachments || []
@@ -628,402 +802,414 @@ export default function ConversationPage() {
                       )
 
                       return (
-                        <Message
-                          key={message.id}
-                          align={isOwn ? "end" : "start"}
-                          className="mb-4 group/msg relative"
+                        <div
+                          key={message.id || virtualRow.key}
+                          data-index={virtualRow.index}
+                          ref={rowVirtualizer.measureElement}
+                          style={{
+                            position: "absolute",
+                            top: 0,
+                            left: 0,
+                            width: "100%",
+                            transform: `translateY(${virtualRow.start}px)`,
+                          }}
                         >
-                          <MessageAvatar className="size-8 border bg-card text-xs font-semibold shrink-0">
-                            <span className="sr-only">{isOwn ? "Bạn" : message.senderName}</span>
-                            {isOwn
-                              ? (currentUser?.fullName ? currentUser.fullName.substring(0, 2).toUpperCase() : "AN")
-                              : (message.senderName ? message.senderName.substring(0, 2).toUpperCase() : <User className="size-4" />)}
-                          </MessageAvatar>
-                          <div className={isOwn ? "flex flex-col items-end max-w-[80%] relative" : "flex flex-col items-start max-w-[80%] relative"}>
-                            <div className="mb-1 flex items-center gap-1.5 px-1 text-[11px] text-muted-foreground">
-                              <span className="font-medium">{isOwn ? "Bạn" : message.senderName}</span>
-                              {timeStr && <span>{timeStr}</span>}
+                          <Message
+                            align={isOwn ? "end" : "start"}
+                            className="mb-4 group/msg relative"
+                          >
+                            <MessageAvatar className="size-8 border bg-card text-xs font-semibold shrink-0">
+                              <span className="sr-only">{isOwn ? "Bạn" : message.senderName}</span>
+                              {isOwn
+                                ? (currentUser?.fullName ? currentUser.fullName.substring(0, 2).toUpperCase() : "AN")
+                                : (message.senderName ? message.senderName.substring(0, 2).toUpperCase() : <User className="size-4" />)}
+                            </MessageAvatar>
+                            <div className={isOwn ? "flex flex-col items-end max-w-[80%] relative" : "flex flex-col items-start max-w-[80%] relative"}>
+                              <div className="mb-1 flex items-center gap-1.5 px-1 text-[11px] text-muted-foreground">
+                                <span className="font-medium">{isOwn ? "Bạn" : message.senderName}</span>
+                                {timeStr && <span>{timeStr}</span>}
 
-                              {/* Message Status Tick (For sender) */}
-                              {isOwn && !message.isRecalled && (
-                                <span className="inline-flex items-center ml-0.5" title={isReadByOthers ? "Đã đọc" : "Đã gửi"}>
-                                  {isReadByOthers ? (
-                                    <CheckCheck className="size-3.5 text-emerald-500 font-bold" />
-                                  ) : (
-                                    <Check className="size-3 text-muted-foreground" />
-                                  )}
-                                </span>
-                              )}
-                            </div>
-
-                            {/* Recalled Message State */}
-                            {message.isRecalled ? (
-                              <div className="relative group/bubble">
-                                <div className="flex items-center gap-2 italic text-muted-foreground text-xs py-2 px-3.5 rounded-2xl border border-dashed border-muted-foreground/30 bg-muted/20 shadow-2xs">
-                                  <Undo2 className="size-3.5 opacity-60 shrink-0" />
-                                  <span>Tin nhắn đã được thu hồi</span>
-                                </div>
-
-                                {/* Delete button on recalled message */}
-                                <div
-                                  className={cn(
-                                    "absolute -top-7.5 z-20 flex items-center rounded-full border bg-card/95 p-1 shadow-md opacity-0 group-hover/msg:opacity-100 transition duration-150 backdrop-blur-xs",
-                                    isOwn ? "right-0" : "left-0"
-                                  )}
-                                >
-                                  <button
-                                    type="button"
-                                    onClick={() => setConfirmDeleteId(message.id)}
-                                    className="size-6 flex items-center justify-center rounded-full text-muted-foreground hover:text-foreground hover:bg-muted transition duration-100"
-                                    title="Xóa ở phía tôi"
-                                  >
-                                    <Trash2 className="size-3.5" />
-                                  </button>
-                                </div>
-
-                                {/* Delete Confirmation Popover for Recalled message */}
-                                {confirmDeleteId === message.id && (
-                                  <div className="absolute inset-0 z-30 flex items-center justify-center rounded-2xl bg-background/95 backdrop-blur-xs border p-3 shadow-lg animate-in zoom-in-95 duration-150">
-                                    <div className="text-center space-y-2">
-                                      <p className="text-xs font-semibold text-foreground">Xóa tin nhắn ở phía bạn?</p>
-                                      <p className="text-[10px] text-muted-foreground">Tin nhắn này sẽ bị ẩn khỏi thiết bị của bạn.</p>
-                                      <div className="flex items-center justify-center gap-2 pt-1">
-                                        <button
-                                          type="button"
-                                          onClick={() => setConfirmDeleteId(null)}
-                                          className="rounded-lg border px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted"
-                                        >
-                                          Hủy
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            handleDeleteForMe(message.id)
-                                            setConfirmDeleteId(null)
-                                          }}
-                                          className="rounded-lg bg-destructive text-destructive-foreground px-2.5 py-1 text-[11px] font-medium hover:bg-destructive/90 transition flex items-center gap-1"
-                                        >
-                                          <Trash2 className="size-3" />
-                                          Xóa
-                                        </button>
-                                      </div>
-                                    </div>
-                                  </div>
+                                {/* Message Status Tick (For sender) */}
+                                {isOwn && !message.isRecalled && (
+                                  <span className="inline-flex items-center ml-0.5" title={isReadByOthers ? "Đã đọc" : "Đã gửi"}>
+                                    {isReadByOthers ? (
+                                      <CheckCheck className="size-3.5 text-emerald-500 font-bold" />
+                                    ) : (
+                                      <Check className="size-3 text-muted-foreground" />
+                                    )}
+                                  </span>
                                 )}
                               </div>
-                            ) : (
-                              /* Normal Message Content Container with Actions */
-                              <div className="relative group/bubble">
-                                {/* Floating Action Bar on Hover (MES-007 & MES-008) */}
-                                <div
-                                  className={cn(
-                                    "absolute -top-9.5 z-20 flex items-center gap-0.5 rounded-full border bg-card/95 p-1 shadow-md opacity-0 group-hover/msg:opacity-100 transition duration-150 backdrop-blur-xs",
-                                    isOwn ? "right-0" : "left-0"
-                                  )}
-                                >
-                                  {/* Quick Reaction Emojis (MES-008) */}
-                                  <div className="flex items-center gap-0.5 px-1">
-                                    {QUICK_REACTIONS.map((emoji) => (
-                                      <button
-                                        key={emoji}
-                                        type="button"
-                                        onClick={() => handleReact(message.id, emoji)}
-                                        className="size-6.5 flex items-center justify-center rounded-full hover:scale-125 hover:bg-muted text-xs transition duration-100 cursor-pointer"
-                                        title={`Thả ${emoji}`}
-                                      >
-                                        {emoji}
-                                      </button>
-                                    ))}
+
+                              {/* Recalled Message State */}
+                              {message.isRecalled ? (
+                                <div className="relative group/bubble">
+                                  <div className="flex items-center gap-2 italic text-muted-foreground text-xs py-2 px-3.5 rounded-2xl border border-dashed border-muted-foreground/30 bg-muted/20 shadow-2xs">
+                                    <Undo2 className="size-3.5 opacity-60 shrink-0" />
+                                    <span>Tin nhắn đã được thu hồi</span>
                                   </div>
 
-                                  <div className="h-4 w-px bg-border mx-0.5" />
-
-                                  {/* Recall Action (MES-007) - Sender only */}
-                                  {isOwn && (
+                                  {/* Delete button on recalled message */}
+                                  <div
+                                    className={cn(
+                                      "absolute -top-7.5 z-20 flex items-center rounded-full border bg-card/95 p-1 shadow-md opacity-0 group-hover/msg:opacity-100 transition duration-150 backdrop-blur-xs",
+                                      isOwn ? "right-0" : "left-0"
+                                    )}
+                                  >
                                     <button
                                       type="button"
-                                      onClick={() => setConfirmRecallId(message.id)}
-                                      className="size-6.5 flex items-center justify-center rounded-full text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition duration-100"
-                                      title="Thu hồi tin nhắn với mọi người"
+                                      onClick={() => setConfirmDeleteId(message.id)}
+                                      className="size-6 flex items-center justify-center rounded-full text-muted-foreground hover:text-foreground hover:bg-muted transition duration-100"
+                                      title="Xóa ở phía tôi"
                                     >
-                                      <Undo2 className="size-3.5" />
+                                      <Trash2 className="size-3.5" />
                                     </button>
-                                  )}
-
-                                  {/* Delete for Me Action (MES-007) */}
-                                  <button
-                                    type="button"
-                                    onClick={() => setConfirmDeleteId(message.id)}
-                                    className="size-6.5 flex items-center justify-center rounded-full text-muted-foreground hover:text-foreground hover:bg-muted transition duration-100"
-                                    title="Xóa ở phía tôi"
-                                  >
-                                    <Trash2 className="size-3.5" />
-                                  </button>
-                                </div>
-
-                                {/* Recall Confirmation Modal / Popover */}
-                                {confirmRecallId === message.id && (
-                                  <div className="absolute inset-0 z-30 flex items-center justify-center rounded-2xl bg-background/95 backdrop-blur-xs border p-3 shadow-lg animate-in zoom-in-95 duration-150">
-                                    <div className="text-center space-y-2">
-                                      <p className="text-xs font-semibold text-foreground">Thu hồi tin nhắn này?</p>
-                                      <p className="text-[10px] text-muted-foreground">Tin nhắn sẽ bị thu hồi với tất cả thành viên trong cuộc trò chuyện.</p>
-                                      <div className="flex items-center justify-center gap-2 pt-1">
-                                        <button
-                                          type="button"
-                                          onClick={() => setConfirmRecallId(null)}
-                                          className="rounded-lg border px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted"
-                                        >
-                                          Hủy
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => handleRecallMessage(message.id)}
-                                          disabled={recallingMessageId === message.id}
-                                          className="rounded-lg bg-destructive text-destructive-foreground px-2.5 py-1 text-[11px] font-medium hover:bg-destructive/90 transition flex items-center gap-1"
-                                        >
-                                          {recallingMessageId === message.id ? (
-                                            <Loader2 className="size-3 animate-spin" />
-                                          ) : (
-                                            <Undo2 className="size-3" />
-                                          )}
-                                          Thu hồi
-                                        </button>
-                                      </div>
-                                    </div>
                                   </div>
-                                )}
 
-                                {/* Delete for Me Confirmation Modal / Popover */}
-                                {confirmDeleteId === message.id && (
-                                  <div className="absolute inset-0 z-30 flex items-center justify-center rounded-2xl bg-background/95 backdrop-blur-xs border p-3 shadow-lg animate-in zoom-in-95 duration-150">
-                                    <div className="text-center space-y-2">
-                                      <p className="text-xs font-semibold text-foreground">Xóa tin nhắn ở phía bạn?</p>
-                                      <p className="text-[10px] text-muted-foreground">Tin nhắn này sẽ bị ẩn khỏi thiết bị của bạn nhưng vẫn hiển thị với các thành viên khác.</p>
-                                      <div className="flex items-center justify-center gap-2 pt-1">
-                                        <button
-                                          type="button"
-                                          onClick={() => setConfirmDeleteId(null)}
-                                          className="rounded-lg border px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted"
-                                        >
-                                          Hủy
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            handleDeleteForMe(message.id)
-                                            setConfirmDeleteId(null)
-                                          }}
-                                          className="rounded-lg bg-destructive text-destructive-foreground px-2.5 py-1 text-[11px] font-medium hover:bg-destructive/90 transition flex items-center gap-1"
-                                        >
-                                          <Trash2 className="size-3" />
-                                          Xóa
-                                        </button>
-                                      </div>
-                                    </div>
-                                  </div>
-                                )}
-
-                                <MessageContent
-                                  className={cn(
-                                    "flex flex-col gap-2 p-3 shadow-sm",
-                                    isOwn
-                                      ? "rounded-2xl rounded-tr-sm bg-primary text-primary-foreground"
-                                      : "rounded-2xl rounded-tl-sm border bg-card text-card-foreground"
-                                  )}
-                                >
-                                  {/* Text content if present */}
-                                  {message.content && (
-                                    <p className="leading-relaxed whitespace-pre-wrap text-sm">{message.content}</p>
-                                  )}
-
-                                  {/* Images Gallery */}
-                                  {imageAttachments.length > 0 && (
-                                    <div
-                                      className={cn(
-                                        "grid gap-2 overflow-hidden rounded-xl",
-                                        imageAttachments.length === 1
-                                          ? "grid-cols-1"
-                                          : imageAttachments.length === 2
-                                          ? "grid-cols-2"
-                                          : "grid-cols-2 sm:grid-cols-3"
-                                      )}
-                                    >
-                                      {imageAttachments.map((img, idx) => {
-                                        const fullUrl = getFileFullUrl(img.fileUrl)
-                                        return (
-                                          <div
-                                            key={img.id || idx}
-                                            onClick={() => setActiveLightboxImage(fullUrl)}
-                                            className="group relative cursor-pointer overflow-hidden rounded-lg bg-black/5"
+                                  {/* Delete Confirmation Popover for Recalled message */}
+                                  {confirmDeleteId === message.id && (
+                                    <div className="absolute inset-0 z-30 flex items-center justify-center rounded-2xl bg-background/95 backdrop-blur-xs border p-3 shadow-lg animate-in zoom-in-95 duration-150">
+                                      <div className="text-center space-y-2">
+                                        <p className="text-xs font-semibold text-foreground">Xóa tin nhắn ở phía bạn?</p>
+                                        <p className="text-[10px] text-muted-foreground">Tin nhắn này sẽ bị ẩn khỏi thiết bị của bạn.</p>
+                                        <div className="flex items-center justify-center gap-2 pt-1">
+                                          <button
+                                            type="button"
+                                            onClick={() => setConfirmDeleteId(null)}
+                                            className="rounded-lg border px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted"
                                           >
-                                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                                            <img
-                                              src={fullUrl}
-                                              alt={img.fileName || "Ảnh đính kèm"}
-                                              className="h-44 w-full object-cover transition duration-300 group-hover:scale-105"
-                                            />
-                                            <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 transition group-hover:opacity-100">
-                                              <ZoomIn className="size-6 text-white" />
-                                            </div>
-                                          </div>
-                                        )
-                                      })}
+                                            Hủy
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              handleDeleteForMe(message.id)
+                                              setConfirmDeleteId(null)
+                                            }}
+                                            className="rounded-lg bg-destructive text-destructive-foreground px-2.5 py-1 text-[11px] font-medium hover:bg-destructive/90 transition flex items-center gap-1"
+                                          >
+                                            <Trash2 className="size-3" />
+                                            Xóa
+                                          </button>
+                                        </div>
+                                      </div>
                                     </div>
                                   )}
-
-                                  {/* Videos Player */}
-                                  {videoAttachments.length > 0 && (
-                                    <div className="space-y-2">
-                                      {videoAttachments.map((vid, idx) => (
-                                        <div key={vid.id || idx} className="overflow-hidden rounded-xl bg-black">
-                                          <video
-                                            controls
-                                            src={getFileFullUrl(vid.fileUrl)}
-                                            className="max-h-64 w-full rounded-xl"
-                                          />
-                                        </div>
+                                </div>
+                              ) : (
+                                /* Normal Message Content Container with Actions */
+                                <div className="relative group/bubble">
+                                  {/* Floating Action Bar on Hover (MES-007 & MES-008) */}
+                                  <div
+                                    className={cn(
+                                      "absolute -top-9.5 z-20 flex items-center gap-0.5 rounded-full border bg-card/95 p-1 shadow-md opacity-0 group-hover/msg:opacity-100 transition duration-150 backdrop-blur-xs",
+                                      isOwn ? "right-0" : "left-0"
+                                    )}
+                                  >
+                                    {/* Quick Reaction Emojis (MES-008) */}
+                                    <div className="flex items-center gap-0.5 px-1">
+                                      {QUICK_REACTIONS.map((emoji) => (
+                                        <button
+                                          key={emoji}
+                                          type="button"
+                                          onClick={() => handleReact(message.id, emoji)}
+                                          className="size-6.5 flex items-center justify-center rounded-full hover:scale-125 hover:bg-muted text-xs transition duration-100 cursor-pointer"
+                                          title={`Thả ${emoji}`}
+                                        >
+                                          {emoji}
+                                        </button>
                                       ))}
                                     </div>
-                                  )}
 
-                                  {/* Document & Files Attachments */}
-                                  {docAttachments.length > 0 && (
-                                    <div className="space-y-1.5 w-full">
-                                      {docAttachments.map((doc, idx) => {
-                                        const fullUrl = getFileFullUrl(doc.fileUrl)
-                                        return (
-                                          <div
-                                            key={doc.id || idx}
-                                            className={cn(
-                                              "flex items-center justify-between gap-3 rounded-xl p-2.5 transition",
-                                              isOwn
-                                                ? "bg-primary-foreground/10 text-primary-foreground hover:bg-primary-foreground/20"
-                                                : "bg-muted/70 text-foreground hover:bg-muted"
-                                            )}
+                                    <div className="h-4 w-px bg-border mx-0.5" />
+
+                                    {/* Recall Action (MES-007) - Sender only */}
+                                    {isOwn && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setConfirmRecallId(message.id)}
+                                        className="size-6.5 flex items-center justify-center rounded-full text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition duration-100"
+                                        title="Thu hồi tin nhắn với mọi người"
+                                      >
+                                        <Undo2 className="size-3.5" />
+                                      </button>
+                                    )}
+
+                                    {/* Delete for Me Action (MES-007) */}
+                                    <button
+                                      type="button"
+                                      onClick={() => setConfirmDeleteId(message.id)}
+                                      className="size-6.5 flex items-center justify-center rounded-full text-muted-foreground hover:text-foreground hover:bg-muted transition duration-100"
+                                      title="Xóa ở phía tôi"
+                                    >
+                                      <Trash2 className="size-3.5" />
+                                    </button>
+                                  </div>
+
+                                  {/* Recall Confirmation Modal / Popover */}
+                                  {confirmRecallId === message.id && (
+                                    <div className="absolute inset-0 z-30 flex items-center justify-center rounded-2xl bg-background/95 backdrop-blur-xs border p-3 shadow-lg animate-in zoom-in-95 duration-150">
+                                      <div className="text-center space-y-2">
+                                        <p className="text-xs font-semibold text-foreground">Thu hồi tin nhắn này?</p>
+                                        <p className="text-[10px] text-muted-foreground">Tin nhắn sẽ bị thu hồi với tất cả thành viên trong cuộc trò chuyện.</p>
+                                        <div className="flex items-center justify-center gap-2 pt-1">
+                                          <button
+                                            type="button"
+                                            onClick={() => setConfirmRecallId(null)}
+                                            className="rounded-lg border px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted"
                                           >
-                                            <div className="flex items-center gap-2.5 min-w-0">
-                                              <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-background/80 shadow-xs">
-                                                {renderDocumentIcon(doc.fileName)}
-                                              </div>
-                                              <div className="min-w-0">
-                                                <p className="truncate text-xs font-medium">{doc.fileName}</p>
-                                                {doc.fileSize && (
-                                                  <p className={cn("text-[10px]", isOwn ? "text-primary-foreground/70" : "text-muted-foreground")}>
-                                                    {formatFileSize(doc.fileSize)}
-                                                  </p>
-                                                )}
-                                              </div>
-                                            </div>
-
-                                            <a
-                                              href={fullUrl}
-                                              download={doc.fileName}
-                                              target="_blank"
-                                              rel="noreferrer"
-                                              title={`Tải xuống ${doc.fileName}`}
-                                              className={cn(
-                                                "flex size-8 shrink-0 items-center justify-center rounded-lg transition",
-                                                isOwn
-                                                  ? "hover:bg-primary-foreground/20 text-primary-foreground"
-                                                  : "hover:bg-accent text-primary"
-                                              )}
-                                            >
-                                              <Download className="size-4" />
-                                            </a>
-                                          </div>
-                                        )
-                                      })}
+                                            Hủy
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => handleRecallMessage(message.id)}
+                                            disabled={recallingMessageId === message.id}
+                                            className="rounded-lg bg-destructive text-destructive-foreground px-2.5 py-1 text-[11px] font-medium hover:bg-destructive/90 transition flex items-center gap-1"
+                                          >
+                                            {recallingMessageId === message.id ? (
+                                              <Loader2 className="size-3 animate-spin" />
+                                            ) : (
+                                              <Undo2 className="size-3" />
+                                            )}
+                                            Thu hồi
+                                          </button>
+                                        </div>
+                                      </div>
                                     </div>
                                   )}
-                                </MessageContent>
-                              </div>
-                            )}
 
-                            {/* Message Reactions Badges Row (MES-008) */}
-                            {message.reactions && message.reactions.length > 0 && (
-                              <div className={cn("flex flex-wrap items-center gap-1 mt-1 z-10", isOwn ? "justify-end" : "justify-start")}>
-                                {message.reactions.map((r, rIdx) => {
-                                  const myId = currentUser?.userId || ""
-                                  const myName = currentUser?.fullName || ""
-                                  const hasReacted = Boolean(
-                                    (myId && r.userIds?.includes(myId)) ||
-                                    (myName && r.userNames?.includes(myName))
-                                  )
-
-                                  return (
-                                    <button
-                                      key={rIdx}
-                                      type="button"
-                                      onClick={() => handleReact(message.id, r.emoji)}
-                                      title={`${r.userNames.join(', ')} đã thả ${r.emoji}`}
-                                      className={cn(
-                                        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs transition border shadow-2xs cursor-pointer select-none",
-                                        hasReacted
-                                          ? "border-primary/40 bg-primary/15 font-semibold text-primary"
-                                          : "border-border bg-card hover:bg-muted text-foreground"
-                                      )}
-                                    >
-                                      <span>{r.emoji}</span>
-                                      <span className="text-[10px] font-medium">{r.count}</span>
-                                    </button>
-                                  )
-                                })}
-                              </div>
-                            )}
-
-                            {/* Small Reader Avatars Stack (When Read) */}
-                            {isOwn && isReadByOthers && (
-                              <div className="mt-1 flex items-center justify-end gap-1 px-1">
-                                {readers.length === 1 && (
-                                  <div
-                                    title={`Đã xem bởi: ${readers[0].fullName || readers[0].userName}`}
-                                    className="flex size-4 items-center justify-center rounded-full bg-emerald-100 text-emerald-800 text-[8px] font-bold border border-background shadow-xs ring-1 ring-emerald-500/30"
-                                  >
-                                    {(readers[0].fullName || readers[0].userName || "U").substring(0, 2).toUpperCase()}
-                                  </div>
-                                )}
-
-                                {readers.length === 2 && (
-                                  <div className="flex items-center -space-x-1.5">
-                                    {readers.map((r, i) => (
-                                      <div
-                                        key={r.userId || i}
-                                        title={`Đã xem bởi: ${r.fullName || r.userName}`}
-                                        className="flex size-4 items-center justify-center rounded-full bg-emerald-100 text-emerald-800 text-[8px] font-bold border border-background shadow-xs ring-1 ring-emerald-500/30"
-                                      >
-                                        {(r.fullName || r.userName || "U").substring(0, 2).toUpperCase()}
+                                  {/* Delete for Me Confirmation Modal / Popover */}
+                                  {confirmDeleteId === message.id && (
+                                    <div className="absolute inset-0 z-30 flex items-center justify-center rounded-2xl bg-background/95 backdrop-blur-xs border p-3 shadow-lg animate-in zoom-in-95 duration-150">
+                                      <div className="text-center space-y-2">
+                                        <p className="text-xs font-semibold text-foreground">Xóa tin nhắn ở phía bạn?</p>
+                                        <p className="text-[10px] text-muted-foreground">Tin nhắn này sẽ bị ẩn khỏi thiết bị của bạn nhưng vẫn hiển thị với các thành viên khác.</p>
+                                        <div className="flex items-center justify-center gap-2 pt-1">
+                                          <button
+                                            type="button"
+                                            onClick={() => setConfirmDeleteId(null)}
+                                            className="rounded-lg border px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted"
+                                          >
+                                            Hủy
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              handleDeleteForMe(message.id)
+                                              setConfirmDeleteId(null)
+                                            }}
+                                            className="rounded-lg bg-destructive text-destructive-foreground px-2.5 py-1 text-[11px] font-medium hover:bg-destructive/90 transition flex items-center gap-1"
+                                          >
+                                            <Trash2 className="size-3" />
+                                            Xóa
+                                          </button>
+                                        </div>
                                       </div>
-                                    ))}
-                                  </div>
-                                )}
+                                    </div>
+                                  )}
 
-                                {readers.length > 2 && (
-                                  <div
-                                    title={`Đã xem bởi: ${readers.map((r) => r.fullName || r.userName).join(", ")}`}
-                                    className="flex items-center gap-1"
+                                  <MessageContent
+                                    className={cn(
+                                      "flex flex-col gap-2 p-3 shadow-sm",
+                                      isOwn
+                                        ? "rounded-2xl rounded-tr-sm bg-primary text-primary-foreground"
+                                        : "rounded-2xl rounded-tl-sm border bg-card text-card-foreground"
+                                    )}
                                   >
+                                    {/* Text content if present */}
+                                    {message.content && (
+                                      <p className="leading-relaxed whitespace-pre-wrap text-sm">{message.content}</p>
+                                    )}
+
+                                    {/* Images Gallery */}
+                                    {imageAttachments.length > 0 && (
+                                      <div
+                                        className={cn(
+                                          "grid gap-2 overflow-hidden rounded-xl",
+                                          imageAttachments.length === 1
+                                            ? "grid-cols-1"
+                                            : imageAttachments.length === 2
+                                            ? "grid-cols-2"
+                                            : "grid-cols-2 sm:grid-cols-3"
+                                        )}
+                                      >
+                                        {imageAttachments.map((img, idx) => {
+                                          const fullUrl = getFileFullUrl(img.fileUrl)
+                                          return (
+                                            <div
+                                              key={img.id || idx}
+                                              onClick={() => setActiveLightboxImage(fullUrl)}
+                                              className="group relative cursor-pointer overflow-hidden rounded-lg bg-black/5"
+                                            >
+                                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                                              <img
+                                                src={fullUrl}
+                                                alt={img.fileName || "Ảnh đính kèm"}
+                                                className="h-44 w-full object-cover transition duration-300 group-hover:scale-105"
+                                              />
+                                              <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 transition group-hover:opacity-100">
+                                                <ZoomIn className="size-6 text-white" />
+                                              </div>
+                                            </div>
+                                          )
+                                        })}
+                                      </div>
+                                    )}
+
+                                    {/* Videos Player */}
+                                    {videoAttachments.length > 0 && (
+                                      <div className="space-y-2">
+                                        {videoAttachments.map((vid, idx) => (
+                                          <div key={vid.id || idx} className="overflow-hidden rounded-xl bg-black">
+                                            <video
+                                              controls
+                                              src={getFileFullUrl(vid.fileUrl)}
+                                              className="max-h-64 w-full rounded-xl"
+                                            />
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+
+                                    {/* Document & Files Attachments */}
+                                    {docAttachments.length > 0 && (
+                                      <div className="space-y-1.5 w-full">
+                                        {docAttachments.map((doc, idx) => {
+                                          const fullUrl = getFileFullUrl(doc.fileUrl)
+                                          return (
+                                            <div
+                                              key={doc.id || idx}
+                                              className={cn(
+                                                "flex items-center justify-between gap-3 rounded-xl p-2.5 transition",
+                                                isOwn
+                                                  ? "bg-primary-foreground/10 text-primary-foreground hover:bg-primary-foreground/20"
+                                                  : "bg-muted/70 text-foreground hover:bg-muted"
+                                              )}
+                                            >
+                                              <div className="flex items-center gap-2.5 min-w-0">
+                                                <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-background/80 shadow-xs">
+                                                  {renderDocumentIcon(doc.fileName)}
+                                                </div>
+                                                <div className="min-w-0">
+                                                  <p className="truncate text-xs font-medium">{doc.fileName}</p>
+                                                  {doc.fileSize && (
+                                                    <p className={cn("text-[10px]", isOwn ? "text-primary-foreground/70" : "text-muted-foreground")}>
+                                                      {formatFileSize(doc.fileSize)}
+                                                    </p>
+                                                  )}
+                                                </div>
+                                              </div>
+
+                                              <a
+                                                href={fullUrl}
+                                                download={doc.fileName}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                title={`Tải xuống ${doc.fileName}`}
+                                                className={cn(
+                                                  "flex size-8 shrink-0 items-center justify-center rounded-lg transition",
+                                                  isOwn
+                                                    ? "hover:bg-primary-foreground/20 text-primary-foreground"
+                                                    : "hover:bg-accent text-primary"
+                                                )}
+                                              >
+                                                <Download className="size-4" />
+                                              </a>
+                                            </div>
+                                          )
+                                        })}
+                                      </div>
+                                    )}
+                                  </MessageContent>
+                                </div>
+                              )}
+
+                              {/* Message Reactions Badges Row (MES-008) */}
+                              {message.reactions && message.reactions.length > 0 && (
+                                <div className={cn("flex flex-wrap items-center gap-1 mt-1 z-10", isOwn ? "justify-end" : "justify-start")}>
+                                  {message.reactions.map((r, rIdx) => {
+                                    const myId = currentUser?.userId || ""
+                                    const myName = currentUser?.fullName || ""
+                                    const hasReacted = Boolean(
+                                      (myId && r.userIds?.includes(myId)) ||
+                                      (myName && r.userNames?.includes(myName))
+                                    )
+
+                                    return (
+                                      <button
+                                        key={rIdx}
+                                        type="button"
+                                        onClick={() => handleReact(message.id, r.emoji)}
+                                        title={`${r.userNames.join(', ')} đã thả ${r.emoji}`}
+                                        className={cn(
+                                          "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs transition border shadow-2xs cursor-pointer select-none",
+                                          hasReacted
+                                            ? "border-primary/40 bg-primary/15 font-semibold text-primary"
+                                            : "border-border bg-card hover:bg-muted text-foreground"
+                                        )}
+                                      >
+                                        <span>{r.emoji}</span>
+                                        <span className="text-[10px] font-medium">{r.count}</span>
+                                      </button>
+                                    )
+                                  })}
+                                </div>
+                              )}
+
+                              {/* Small Reader Avatars Stack (When Read) */}
+                              {isOwn && isReadByOthers && (
+                                <div className="mt-1 flex items-center justify-end gap-1 px-1">
+                                  {readers.length === 1 && (
+                                    <div
+                                      title={`Đã xem bởi: ${readers[0].fullName || readers[0].userName}`}
+                                      className="flex size-4 items-center justify-center rounded-full bg-emerald-100 text-emerald-800 text-[8px] font-bold border border-background shadow-xs ring-1 ring-emerald-500/30"
+                                    >
+                                      {(readers[0].fullName || readers[0].userName || "U").substring(0, 2).toUpperCase()}
+                                    </div>
+                                  )}
+
+                                  {readers.length === 2 && (
                                     <div className="flex items-center -space-x-1.5">
-                                      {readers.slice(-2).map((r, i) => (
+                                      {readers.map((r, i) => (
                                         <div
                                           key={r.userId || i}
+                                          title={`Đã xem bởi: ${r.fullName || r.userName}`}
                                           className="flex size-4 items-center justify-center rounded-full bg-emerald-100 text-emerald-800 text-[8px] font-bold border border-background shadow-xs ring-1 ring-emerald-500/30"
                                         >
                                           {(r.fullName || r.userName || "U").substring(0, 2).toUpperCase()}
                                         </div>
                                       ))}
                                     </div>
-                                    <span className="flex items-center justify-center rounded-full bg-emerald-500/10 px-1 py-0.2 text-[8px] font-semibold text-emerald-600 border border-emerald-500/20">
-                                      +{readers.length - 2}
-                                    </span>
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        </Message>
+                                  )}
+
+                                  {readers.length > 2 && (
+                                    <div
+                                      title={`Đã xem bởi: ${readers.map((r) => r.fullName || r.userName).join(", ")}`}
+                                      className="flex items-center gap-1"
+                                    >
+                                      <div className="flex items-center -space-x-1.5">
+                                        {readers.slice(-2).map((r, i) => (
+                                          <div
+                                            key={r.userId || i}
+                                            className="flex size-4 items-center justify-center rounded-full bg-emerald-100 text-emerald-800 text-[8px] font-bold border border-background shadow-xs ring-1 ring-emerald-500/30"
+                                          >
+                                            {(r.fullName || r.userName || "U").substring(0, 2).toUpperCase()}
+                                          </div>
+                                        ))}
+                                      </div>
+                                      <span className="flex items-center justify-center rounded-full bg-emerald-500/10 px-1 py-0.2 text-[8px] font-semibold text-emerald-600 border border-emerald-500/20">
+                                        +{readers.length - 2}
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </Message>
+                        </div>
                       )
                     })}
-                  </MessageGroup>
+                  </div>
                 </MessageScrollerItem>
               )}
             </MessageScrollerContent>

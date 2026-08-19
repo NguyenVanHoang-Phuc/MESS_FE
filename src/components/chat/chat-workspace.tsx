@@ -230,7 +230,11 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
       setDraftRecipient(null)
       router.push(`/chat/${existingDirect.id}`)
     } else {
+      // Navigate to /chat to clear any open conversation before showing draft
       setDraftRecipient(person)
+      if (conversationId) {
+        router.push('/chat')
+      }
     }
   }
 
@@ -258,8 +262,8 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
         setConversationAttachments([])
         return
       }
-      const msgs = await getMessages(conversationId)
-      const allAtts = msgs.flatMap((m) => m.attachments || [])
+      const res = await getMessages(conversationId)
+      const allAtts = (res.items || []).flatMap((m) => m.attachments || [])
       setConversationAttachments(allAtts)
     }
     loadAttachments()
@@ -657,7 +661,27 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
             <button className="rounded-lg p-2 text-muted-foreground hover:bg-accent lg:hidden" aria-label="Mở danh sách">
               <Menu className="size-5" />
             </button>
-            {selectedInfo && (
+            {/* Show draft recipient info when in draft mode */}
+            {draftRecipient && (
+              <>
+                <div className="flex size-10 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
+                  {draftRecipient.fullName ? draftRecipient.fullName.substring(0, 2).toUpperCase() : "NV"}
+                </div>
+                <div className="min-w-0">
+                  <h2 className="truncate text-sm font-semibold">{draftRecipient.fullName}</h2>
+                  <p className="text-xs text-muted-foreground italic">Tin nhắn mới</p>
+                </div>
+                <button
+                  onClick={() => setDraftRecipient(null)}
+                  className="ml-1 flex size-6 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground transition"
+                  title="Đóng draft"
+                >
+                  <X className="size-3.5" />
+                </button>
+              </>
+            )}
+            {/* Show real conversation info only when NOT in draft mode */}
+            {!draftRecipient && selectedInfo && (
               <>
                 <div
                   className={cn(
@@ -677,7 +701,7 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
                 </div>
               </>
             )}
-            {!selectedInfo && <h2 className="text-sm font-semibold text-muted-foreground">Chọn một hội thoại</h2>}
+            {!draftRecipient && !selectedInfo && <h2 className="text-sm font-semibold text-muted-foreground">Chọn một hội thoại</h2>}
           </div>
           <div className="flex items-center gap-1">
             <button
@@ -735,6 +759,7 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
                   return [newConv, ...prev]
                 })
                 setDraftRecipient(null)
+                router.push(`/chat/${newConv.id}`)
               }}
               onCancel={() => setDraftRecipient(null)}
             />

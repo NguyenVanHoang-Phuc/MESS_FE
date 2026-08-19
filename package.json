@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@microsoft/signalr": "^10.0.11",
+    "@tanstack/react-virtual": "^3.14.9",
     "@vercel/analytics": "^2.0.1",
     "axios": "^1.19.0",
     "clsx": "^2.1.1",

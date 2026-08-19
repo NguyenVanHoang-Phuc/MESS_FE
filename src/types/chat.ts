@@ -37,6 +37,13 @@ export interface MessageResponse {
   reads?: MessageReadResponse[]
 }
 
+export interface CursorPaginatedMessagesResponse {
+  items: MessageResponse[]
+  nextCursor?: string | null
+  hasMore: boolean
+  totalCount: number
+}
+
 export interface MessageReadResponse {
   userId: string
   userName: string
