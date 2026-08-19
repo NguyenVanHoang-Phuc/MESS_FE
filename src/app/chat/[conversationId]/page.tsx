@@ -91,7 +91,7 @@ export default function ConversationPage() {
   // Scroll to the very last message
   function scrollToBottom() {
     if (visibleMessages.length > 0) {
-      rowVirtualizer.scrollToIndex(visibleMessages.length - 1, { align: 'end', behavior: 'smooth' })
+      rowVirtualizer.scrollToIndex(visibleMessages.length - 1, { align: 'end', behavior: 'auto' })
     } else {
       const el = viewportRef.current
       if (el) el.scrollTop = el.scrollHeight
