@@ -19,4 +19,20 @@ api.interceptors.request.use((config) => {
   return config
 })
 
+// Response interceptor to extract human-readable error messages from server
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const serverMessage =
+      error.response?.data?.message ||
+      error.response?.data?.error ||
+      (typeof error.response?.data === 'string' ? error.response.data : null)
+
+    if (serverMessage && typeof serverMessage === 'string') {
+      error.message = serverMessage
+    }
+    return Promise.reject(error)
+  }
+)
+
 export default api

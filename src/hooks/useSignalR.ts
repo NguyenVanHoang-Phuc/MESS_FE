@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { signalRService } from '@/lib/signalr'
-import type { ConversationResponse, MessageRecalledEvent, MessageReactionEvent, MessageResponse, MessagesReadEvent } from '@/types/chat'
+import type { ConversationResponse, MessageRecalledEvent, MessageReactionEvent, MessageResponse, MessagesReadEvent, UserTypingEvent } from '@/types/chat'
 
 export function useSignalR(conversationId?: string | null) {
   const [isConnected, setIsConnected] = useState(false)
@@ -10,6 +10,7 @@ export function useSignalR(conversationId?: string | null) {
   const [readEvent, setReadEvent] = useState<MessagesReadEvent | null>(null)
   const [recalledEvent, setRecalledEvent] = useState<MessageRecalledEvent | null>(null)
   const [reactionEvent, setReactionEvent] = useState<MessageReactionEvent | null>(null)
+  const [typingEvent, setTypingEvent] = useState<UserTypingEvent | null>(null)
 
   useEffect(() => {
     const connection = signalRService.getConnection()
@@ -31,9 +32,7 @@ export function useSignalR(conversationId?: string | null) {
     startConnection()
 
     const handleMessage = (message: MessageResponse) => {
-      if (!conversationId || message.conversationId === conversationId) {
-        setIncomingMessage(message)
-      }
+      setIncomingMessage(message)
     }
 
     const handleNewConversation = (conversation: ConversationResponse) => {
@@ -55,9 +54,7 @@ export function useSignalR(conversationId?: string | null) {
         messageIds: eventData.messageIds || eventData.MessageIds || [],
         readAt: eventData.readAt || eventData.ReadAt || new Date().toISOString(),
       }
-      if (!conversationId || normalized.conversationId === conversationId) {
-        setReadEvent(normalized)
-      }
+      setReadEvent(normalized)
     }
 
     const handleMessageRecalled = (eventData: any) => {
@@ -66,9 +63,7 @@ export function useSignalR(conversationId?: string | null) {
         conversationId: eventData.conversationId || eventData.ConversationId,
         messageId: eventData.messageId || eventData.MessageId,
       }
-      if (!conversationId || normalized.conversationId === conversationId) {
-        setRecalledEvent(normalized)
-      }
+      setRecalledEvent(normalized)
     }
 
     const handleMessageReaction = (eventData: any) => {
@@ -78,9 +73,17 @@ export function useSignalR(conversationId?: string | null) {
         messageId: eventData.messageId || eventData.MessageId,
         reactions: eventData.reactions || eventData.Reactions || [],
       }
-      if (!conversationId || normalized.conversationId === conversationId) {
-        setReactionEvent(normalized)
+      setReactionEvent(normalized)
+    }
+
+    const handleUserTyping = (eventData: any) => {
+      const normalized: UserTypingEvent = {
+        conversationId: eventData.conversationId || eventData.ConversationId,
+        userId: eventData.userId || eventData.UserId,
+        userName: eventData.userName || eventData.UserName,
+        isTyping: eventData.isTyping ?? eventData.IsTyping ?? false,
       }
+      setTypingEvent(normalized)
     }
 
     connection.on('ReceiveNewMessage', handleMessage)
@@ -90,6 +93,7 @@ export function useSignalR(conversationId?: string | null) {
     connection.on('ReceiveMessagesRead', handleMessagesRead)
     connection.on('ReceiveMessageRecalled', handleMessageRecalled)
     connection.on('ReceiveMessageReaction', handleMessageReaction)
+    connection.on('ReceiveUserTyping', handleUserTyping)
 
     return () => {
       connection.off('ReceiveNewMessage', handleMessage)
@@ -99,8 +103,37 @@ export function useSignalR(conversationId?: string | null) {
       connection.off('ReceiveMessagesRead', handleMessagesRead)
       connection.off('ReceiveMessageRecalled', handleMessageRecalled)
       connection.off('ReceiveMessageReaction', handleMessageReaction)
+      connection.off('ReceiveUserTyping', handleUserTyping)
     }
   }, [conversationId])
 
-  return { isConnected, incomingMessage, incomingConversation, deletedConversationId, readEvent, recalledEvent, reactionEvent }
+  // Join / Leave conversation group when connection is active
+  useEffect(() => {
+    const connection = signalRService.getConnection()
+    if (isConnected && conversationId && connection.state === 'Connected') {
+      connection.invoke('JoinConversation', conversationId).catch(() => {})
+    }
+    return () => {
+      if (conversationId && connection.state === 'Connected') {
+        connection.invoke('LeaveConversation', conversationId).catch(() => {})
+      }
+    }
+  }, [isConnected, conversationId])
+
+  const sendTyping = useCallback(
+    (isTyping: boolean, userName?: string) => {
+      if (!conversationId) return
+      try {
+        const connection = signalRService.getConnection()
+        if (connection.state === 'Connected') {
+          connection.invoke('SendTyping', conversationId, userName || 'Người dùng', isTyping).catch(() => {})
+        }
+      } catch (err) {
+        console.warn('Failed to send typing status:', err)
+      }
+    },
+    [conversationId]
+  )
+
+  return { isConnected, incomingMessage, incomingConversation, deletedConversationId, readEvent, recalledEvent, reactionEvent, typingEvent, sendTyping }
 }

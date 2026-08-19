@@ -20,6 +20,7 @@ export interface ParticipantResponse {
 export interface MessageSummaryResponse {
   id: string
   content?: string
+  senderId?: string
   senderName: string
   sentAt: string
 }
@@ -37,6 +38,13 @@ export interface MessageResponse {
   reads?: MessageReadResponse[]
 }
 
+export interface CursorPaginatedMessagesResponse {
+  items: MessageResponse[]
+  nextCursor?: string | null
+  hasMore: boolean
+  totalCount: number
+}
+
 export interface MessageReadResponse {
   userId: string
   userName: string
@@ -51,6 +59,13 @@ export interface MessagesReadEvent {
   readerName: string
   messageIds: string[]
   readAt: string
+}
+
+export interface UserTypingEvent {
+  conversationId: string
+  userId: string
+  userName: string
+  isTyping: boolean
 }
 
 export interface AttachmentResponse {

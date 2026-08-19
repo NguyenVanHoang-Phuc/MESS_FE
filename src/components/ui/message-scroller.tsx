@@ -57,24 +57,31 @@ MessageScroller.displayName = 'MessageScroller'
 // The actual scrollable area; auto-scrolls to bottom when content changes
 interface MessageScrollerViewportProps extends React.HTMLAttributes<HTMLDivElement> {}
 
-function MessageScrollerViewport({ className, children, ...props }: MessageScrollerViewportProps) {
-  const { viewportRef, scrollToBottom } = useMessageScroller()
+const MessageScrollerViewport = React.forwardRef<HTMLDivElement, MessageScrollerViewportProps>(
+  ({ className, children, ...props }, ref) => {
+    const { viewportRef } = useMessageScroller()
 
-  // Auto-scroll to bottom whenever children update
-  useEffect(() => {
-    scrollToBottom()
-  })
-
-  return (
-    <div
-      ref={viewportRef}
-      className={cn('flex-1 overflow-y-auto', className)}
-      {...props}
-    >
-      {children}
-    </div>
-  )
-}
+    return (
+      <div
+        ref={(node) => {
+          if (typeof ref === 'function') {
+            ref(node)
+          } else if (ref && 'current' in ref) {
+            ;(ref as React.MutableRefObject<HTMLDivElement | null>).current = node
+          }
+          if (viewportRef && 'current' in viewportRef) {
+            ;(viewportRef as React.MutableRefObject<HTMLDivElement | null>).current = node
+          }
+        }}
+        className={cn('flex-1 overflow-y-auto', className)}
+        {...props}
+      >
+        {children}
+      </div>
+    )
+  }
+)
+MessageScrollerViewport.displayName = 'MessageScrollerViewport'
 
 // ─── MessageScrollerContent ───────────────────────────────────────────────────
 // Centres and constrains the message list width
