@@ -7,6 +7,8 @@ import {
   ArrowUp,
   Check,
   CheckCheck,
+  CheckSquare,
+  ChevronDown,
   Download,
   Eye,
   File,
@@ -33,11 +35,16 @@ import { Button } from "@/components/ui/button"
 import { Message, MessageAvatar, MessageContent, MessageGroup } from "@/components/ui/message"
 import { MessageScroller, MessageScrollerContent, MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport } from "@/components/ui/message-scroller"
 import { useSignalR } from "@/hooks/useSignalR"
-import { getMessages, markConversationAsReadApi, reactMessageApi, recallMessageApi, sendMessageApi, uploadFilesApi } from "@/services/api/chat"
+import { getConversationById, getMessages, markConversationAsReadApi, reactMessageApi, recallMessageApi, sendMessageApi, uploadFilesApi } from "@/services/api/chat"
+import { getTasksApi } from "@/services/api/tasks"
 import { getCurrentUser } from "@/services/api/auth"
 import { formatFileSize, formatMessageTime } from "@/utils/formatters"
 import { cn } from "@/utils/cn"
-import type { AttachmentInput, AttachmentResponse, MessageResponse, ReactionResponse } from "@/types/chat"
+import type { AttachmentInput, AttachmentResponse, ConversationResponse, MessageResponse, ReactionResponse } from "@/types/chat"
+import type { TaskResponse } from "@/types/task"
+import { CreateTaskModal } from "@/components/chat/create-task-modal"
+import { TaskItemBadge } from "@/components/chat/task-item-badge"
+import { TaskReminderToast } from "@/components/chat/task-reminder-toast"
 
 const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "😡"]
 
@@ -61,9 +68,27 @@ export default function ConversationPage() {
   const [selectedFiles, setSelectedFiles] = useState<SelectedFileItem[]>([])
   const [activeLightboxImage, setActiveLightboxImage] = useState<string | null>(null)
 
+  // Task Integration States (MES-009 & MES-010)
+  const [tasks, setTasks] = useState<TaskResponse[]>([])
+  const [isTasksHubOpen, setIsTasksHubOpen] = useState(false)
+  const [isCreateTaskOpen, setIsCreateTaskOpen] = useState(false)
+  const [createTaskSourceMessage, setCreateTaskSourceMessage] = useState<MessageResponse | null>(null)
+  const [conversationDetails, setConversationDetails] = useState<ConversationResponse | null>(null)
+
   const fileInputRef = useRef<HTMLInputElement>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
-  const { incomingMessage, readEvent, recalledEvent, reactionEvent, typingEvent, sendTyping } = useSignalR(conversationId)
+  const { 
+    incomingMessage, 
+    readEvent, 
+    recalledEvent, 
+    reactionEvent, 
+    typingEvent, 
+    incomingTask, 
+    taskUpdatedEvent, 
+    taskDeletedEvent, 
+    taskReminderEvent,
+    sendTyping 
+  } = useSignalR(conversationId)
   const [currentUser, setCurrentUser] = useState<any>(null)
   const [hiddenMessageIds, setHiddenMessageIds] = useState<string[]>([])
   const [recallingMessageId, setRecallingMessageId] = useState<string | null>(null)
@@ -257,18 +282,70 @@ export default function ConversationPage() {
     )
   }, [reactionEvent, conversationId])
 
-  // Load initial conversation messages via Cursor Pagination
+  // Listen for real-time Task creation & updates from SignalR (MES-009 & MES-010)
+  useEffect(() => {
+    if (!incomingTask) return
+    if (
+      incomingTask.conversationId === conversationId ||
+      (incomingTask.sourceMessageId && messages.some((m) => m.id === incomingTask.sourceMessageId))
+    ) {
+      setTasks((prev) => {
+        const exists = prev.some((t) => t.id === incomingTask.id)
+        if (exists) return prev.map((t) => (t.id === incomingTask.id ? incomingTask : t))
+        return [incomingTask, ...prev]
+      })
+    }
+  }, [incomingTask, conversationId, messages])
+
+  useEffect(() => {
+    if (!taskUpdatedEvent) return
+    setTasks((prev) => prev.map((t) => (t.id === taskUpdatedEvent.id ? taskUpdatedEvent : t)))
+  }, [taskUpdatedEvent])
+
+  useEffect(() => {
+    if (!taskDeletedEvent) return
+    if (!taskDeletedEvent.conversationId || taskDeletedEvent.conversationId === conversationId) {
+      setTasks((prev) => prev.filter((t) => t.id !== taskDeletedEvent.taskId))
+    }
+  }, [taskDeletedEvent, conversationId])
+
+  function handleTaskCreated(newTask: TaskResponse) {
+    setTasks((prev) => [newTask, ...prev.filter((t) => t.id !== newTask.id)])
+  }
+
+  function handleTaskUpdated(updatedTask: TaskResponse) {
+    setTasks((prev) => prev.map((t) => (t.id === updatedTask.id ? updatedTask : t)))
+  }
+
+  function handleTaskDeleted(taskId: string) {
+    setTasks((prev) => prev.filter((t) => t.id !== taskId))
+  }
+
+  // Load initial conversation messages and tasks
   useEffect(() => {
     async function load() {
       if (!conversationId) return
       setLoading(true)
       setNewMessageCount(0)
       setIsAtBottom(true)
-      const res = await getMessages(conversationId, null, 30)
-      setMessages(res.items)
-      setNextCursor(res.nextCursor || null)
-      setHasMore(res.hasMore)
-      setLoading(false)
+
+      try {
+        const [msgRes, convRes, taskList] = await Promise.all([
+          getMessages(conversationId, null, 30),
+          getConversationById(conversationId),
+          getTasksApi({ conversationId }),
+        ])
+
+        setMessages(msgRes.items)
+        setNextCursor(msgRes.nextCursor || null)
+        setHasMore(msgRes.hasMore)
+        if (convRes) setConversationDetails(convRes)
+        setTasks(taskList)
+      } catch (err) {
+        console.warn("Failed to load conversation details / tasks:", err)
+      } finally {
+        setLoading(false)
+      }
     }
     load()
   }, [conversationId])
@@ -774,6 +851,59 @@ export default function ConversationPage() {
             </div>
           )}
 
+          {/* Conversation Task Hub Bar (MES-009 & MES-010) */}
+          {tasks.length > 0 && (
+            <div className="border-b bg-card/70 backdrop-blur-xs px-4 py-2 text-xs transition z-10 shrink-0">
+              <div className="mx-auto flex max-w-3xl items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => setIsTasksHubOpen((prev) => !prev)}
+                  className="flex items-center gap-2 font-semibold text-foreground hover:text-primary transition cursor-pointer select-none"
+                >
+                  <CheckSquare className="size-4 text-primary" />
+                  <span>Công việc ({tasks.length})</span>
+                  <span className="flex items-center gap-1.5 font-normal text-[11px] text-muted-foreground">
+                    <span>· {tasks.filter(t => t.status === 'InProgress').length} đang làm</span>
+                    <span>· {tasks.filter(t => t.status === 'Todo').length} chưa làm</span>
+                    <span>· {tasks.filter(t => t.status === 'Done').length} xong</span>
+                  </span>
+                  <ChevronDown className={cn("size-3.5 text-muted-foreground transition duration-200", isTasksHubOpen && "rotate-180")} />
+                </button>
+
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setCreateTaskSourceMessage(null)
+                    setIsCreateTaskOpen(true)
+                  }}
+                  className="h-7 px-2.5 text-[11px] gap-1 text-primary hover:bg-primary/10 cursor-pointer"
+                >
+                  <CheckSquare className="size-3" /> + Giao việc
+                </Button>
+              </div>
+
+              {/* Expanded Task List Drawer */}
+              {isTasksHubOpen && (
+                <div className="mx-auto max-w-3xl pt-2.5 pb-1 animate-in slide-in-from-top-2 duration-150 border-t border-border/40 mt-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-80 overflow-y-auto pr-1 pb-20">
+                    {tasks.map((task) => (
+                      <TaskItemBadge
+                        key={task.id}
+                        task={task}
+                        participants={conversationDetails?.participants || []}
+                        currentUserId={currentUser?.userId}
+                        onTaskUpdated={handleTaskUpdated}
+                        onTaskDeleted={handleTaskDeleted}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           <MessageScrollerViewport
             ref={viewportRef}
             onScroll={(e) => {
@@ -1001,42 +1131,12 @@ export default function ConversationPage() {
                                     <button
                                       type="button"
                                       onClick={() => setConfirmDeleteId(message.id)}
-                                      className="size-6 flex items-center justify-center rounded-full text-muted-foreground hover:text-foreground hover:bg-muted transition duration-100"
+                                      className="size-6 flex items-center justify-center rounded-full text-muted-foreground hover:text-foreground hover:bg-muted transition duration-100 cursor-pointer"
                                       title="Xóa ở phía tôi"
                                     >
                                       <Trash2 className="size-3.5" />
                                     </button>
                                   </div>
-
-                                  {/* Delete Confirmation Popover for Recalled message */}
-                                  {confirmDeleteId === message.id && (
-                                    <div className="absolute inset-0 z-30 flex items-center justify-center rounded-2xl bg-background/95 backdrop-blur-xs border p-3 shadow-lg animate-in zoom-in-95 duration-150">
-                                      <div className="text-center space-y-2">
-                                        <p className="text-xs font-semibold text-foreground">Xóa tin nhắn ở phía bạn?</p>
-                                        <p className="text-[10px] text-muted-foreground">Tin nhắn này sẽ bị ẩn khỏi thiết bị của bạn.</p>
-                                        <div className="flex items-center justify-center gap-2 pt-1">
-                                          <button
-                                            type="button"
-                                            onClick={() => setConfirmDeleteId(null)}
-                                            className="rounded-lg border px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted"
-                                          >
-                                            Hủy
-                                          </button>
-                                          <button
-                                            type="button"
-                                            onClick={() => {
-                                              handleDeleteForMe(message.id)
-                                              setConfirmDeleteId(null)
-                                            }}
-                                            className="rounded-lg bg-destructive text-destructive-foreground px-2.5 py-1 text-[11px] font-medium hover:bg-destructive/90 transition flex items-center gap-1"
-                                          >
-                                            <Trash2 className="size-3" />
-                                            Xóa
-                                          </button>
-                                        </div>
-                                      </div>
-                                    </div>
-                                  )}
                                 </div>
                               ) : (
                                 /* Normal Message Content Container with Actions */
@@ -1072,6 +1172,19 @@ export default function ConversationPage() {
 
                                     <div className="h-4 w-px bg-border mx-0.5" />
 
+                                    {/* Create Task Action (MES-009) */}
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setCreateTaskSourceMessage(message)
+                                        setIsCreateTaskOpen(true)
+                                      }}
+                                      className="size-6.5 flex items-center justify-center rounded-full text-muted-foreground hover:text-primary hover:bg-primary/10 transition duration-100 cursor-pointer"
+                                      title="Tạo Task từ tin nhắn này"
+                                    >
+                                      <CheckSquare className="size-3.5 text-primary" />
+                                    </button>
+
                                     {/* Recall Action (MES-007) - Sender only */}
                                     {isOwn && (
                                       <button
@@ -1094,68 +1207,6 @@ export default function ConversationPage() {
                                       <Trash2 className="size-3.5" />
                                     </button>
                                   </div>
-
-                                  {/* Recall Confirmation Modal / Popover */}
-                                  {confirmRecallId === message.id && (
-                                    <div className="absolute inset-0 z-30 flex items-center justify-center rounded-2xl bg-background/95 backdrop-blur-xs border p-3 shadow-lg animate-in zoom-in-95 duration-150">
-                                      <div className="text-center space-y-2">
-                                        <p className="text-xs font-semibold text-foreground">Thu hồi tin nhắn này?</p>
-                                        <p className="text-[10px] text-muted-foreground">Tin nhắn sẽ bị thu hồi với tất cả thành viên trong cuộc trò chuyện.</p>
-                                        <div className="flex items-center justify-center gap-2 pt-1">
-                                          <button
-                                            type="button"
-                                            onClick={() => setConfirmRecallId(null)}
-                                            className="rounded-lg border px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted"
-                                          >
-                                            Hủy
-                                          </button>
-                                          <button
-                                            type="button"
-                                            onClick={() => handleRecallMessage(message.id)}
-                                            disabled={recallingMessageId === message.id}
-                                            className="rounded-lg bg-destructive text-destructive-foreground px-2.5 py-1 text-[11px] font-medium hover:bg-destructive/90 transition flex items-center gap-1"
-                                          >
-                                            {recallingMessageId === message.id ? (
-                                              <Loader2 className="size-3 animate-spin" />
-                                            ) : (
-                                              <Undo2 className="size-3" />
-                                            )}
-                                            Thu hồi
-                                          </button>
-                                        </div>
-                                      </div>
-                                    </div>
-                                  )}
-
-                                  {/* Delete for Me Confirmation Modal / Popover */}
-                                  {confirmDeleteId === message.id && (
-                                    <div className="absolute inset-0 z-30 flex items-center justify-center rounded-2xl bg-background/95 backdrop-blur-xs border p-3 shadow-lg animate-in zoom-in-95 duration-150">
-                                      <div className="text-center space-y-2">
-                                        <p className="text-xs font-semibold text-foreground">Xóa tin nhắn ở phía bạn?</p>
-                                        <p className="text-[10px] text-muted-foreground">Tin nhắn này sẽ bị ẩn khỏi thiết bị của bạn nhưng vẫn hiển thị với các thành viên khác.</p>
-                                        <div className="flex items-center justify-center gap-2 pt-1">
-                                          <button
-                                            type="button"
-                                            onClick={() => setConfirmDeleteId(null)}
-                                            className="rounded-lg border px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted"
-                                          >
-                                            Hủy
-                                          </button>
-                                          <button
-                                            type="button"
-                                            onClick={() => {
-                                              handleDeleteForMe(message.id)
-                                              setConfirmDeleteId(null)
-                                            }}
-                                            className="rounded-lg bg-destructive text-destructive-foreground px-2.5 py-1 text-[11px] font-medium hover:bg-destructive/90 transition flex items-center gap-1"
-                                          >
-                                            <Trash2 className="size-3" />
-                                            Xóa
-                                          </button>
-                                        </div>
-                                      </div>
-                                    </div>
-                                  )}
 
                                   <MessageContent
                                     className={cn(
@@ -1304,6 +1355,21 @@ export default function ConversationPage() {
                                   })}
                                 </div>
                               )}
+
+                              {/* Linked Task Badge (MES-009 & MES-010) */}
+                              {(() => {
+                                const linkedTask = tasks.find((t) => t.sourceMessageId === message.id)
+                                if (!linkedTask) return null
+                                return (
+                                  <TaskItemBadge
+                                    task={linkedTask}
+                                    participants={conversationDetails?.participants || []}
+                                    currentUserId={currentUser?.userId}
+                                    onTaskUpdated={handleTaskUpdated}
+                                    onTaskDeleted={handleTaskDeleted}
+                                  />
+                                )
+                              })()}
 
                               {/* Small Reader Avatars Stack (When Read) */}
                               {isOwn && isReadByOthers && isLastInGroup && (
@@ -1481,9 +1547,25 @@ export default function ConversationPage() {
                 aria-label="Đính kèm tệp tài liệu"
                 title="Đính kèm tài liệu, PDF, Excel, ZIP (Tối đa 30 tệp)"
                 disabled={isSending}
-                className="size-9 rounded-xl hover:bg-muted text-muted-foreground hover:text-foreground"
+                className="size-9 rounded-xl hover:bg-muted text-muted-foreground hover:text-foreground cursor-pointer"
               >
                 <Paperclip className="size-4" />
+              </Button>
+              {/* Create Task Button from Input Toolbar (Flow 2) */}
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => {
+                  setCreateTaskSourceMessage(null)
+                  setIsCreateTaskOpen(true)
+                }}
+                aria-label="Giao việc / Tạo Task mới"
+                title="Giao việc / Tạo Task mới trong cuộc trò chuyện"
+                disabled={isSending}
+                className="size-9 rounded-xl hover:bg-primary/10 text-muted-foreground hover:text-primary transition shrink-0 cursor-pointer"
+              >
+                <CheckSquare className="size-4 text-primary" />
               </Button>
             </div>
 
@@ -1540,6 +1622,117 @@ export default function ConversationPage() {
             <span>Hỗ trợ kéo thả hoặc Paste ảnh từ Clipboard</span>
           </div>
         </div>
+
+        {/* Create Task Modal (MES-009 & MES-010) */}
+        <CreateTaskModal
+          isOpen={isCreateTaskOpen}
+          onClose={() => {
+            setIsCreateTaskOpen(false)
+            setCreateTaskSourceMessage(null)
+          }}
+          conversationId={conversationId}
+          sourceMessage={createTaskSourceMessage}
+          participants={conversationDetails?.participants || []}
+          currentUserId={currentUser?.userId}
+          conversationTitle={conversationDetails?.title}
+          onTaskCreated={handleTaskCreated}
+        />
+
+        {/* Task Due & Overdue Reminder Toast (MES-013) */}
+        <TaskReminderToast reminder={taskReminderEvent} />
+
+        {/* Centralized Recall Message Confirmation Modal */}
+        {confirmRecallId && (
+          <div 
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150"
+            onClick={() => setConfirmRecallId(null)}
+          >
+            <div 
+              className="w-full max-w-sm rounded-2xl border border-border bg-card p-5 shadow-2xl text-center space-y-4 animate-in zoom-in-95 duration-150"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-destructive/10 text-destructive">
+                <Undo2 className="size-6" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-sm font-bold text-foreground">Thu hồi tin nhắn này?</h3>
+                <p className="text-xs text-muted-foreground">
+                  Tin nhắn sẽ bị thu hồi với tất cả thành viên trong cuộc trò chuyện.
+                </p>
+              </div>
+              <div className="flex items-center justify-center gap-2.5 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setConfirmRecallId(null)}
+                  className="flex-1 rounded-xl border border-border bg-background px-4 py-2 text-xs font-semibold text-foreground hover:bg-muted transition cursor-pointer"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const msgId = confirmRecallId
+                    setConfirmRecallId(null)
+                    if (msgId) await handleRecallMessage(msgId)
+                  }}
+                  disabled={Boolean(recallingMessageId)}
+                  className="flex-1 rounded-xl bg-destructive text-destructive-foreground px-4 py-2 text-xs font-semibold hover:bg-destructive/90 transition flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+                >
+                  {recallingMessageId ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <Undo2 className="size-3.5" />
+                  )}
+                  <span>Thu hồi</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Centralized Delete for Me Confirmation Modal */}
+        {confirmDeleteId && (
+          <div 
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150"
+            onClick={() => setConfirmDeleteId(null)}
+          >
+            <div 
+              className="w-full max-w-sm rounded-2xl border border-border bg-card p-5 shadow-2xl text-center space-y-4 animate-in zoom-in-95 duration-150"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-destructive/10 text-destructive">
+                <Trash2 className="size-6" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-sm font-bold text-foreground">Xóa tin nhắn ở phía bạn?</h3>
+                <p className="text-xs text-muted-foreground">
+                  Tin nhắn này sẽ bị ẩn khỏi thiết bị của bạn nhưng vẫn hiển thị với các thành viên khác.
+                </p>
+              </div>
+              <div className="flex items-center justify-center gap-2.5 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setConfirmDeleteId(null)}
+                  className="flex-1 rounded-xl border border-border bg-background px-4 py-2 text-xs font-semibold text-foreground hover:bg-muted transition cursor-pointer"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const msgId = confirmDeleteId
+                    setConfirmDeleteId(null)
+                    if (msgId) handleDeleteForMe(msgId)
+                  }}
+                  className="flex-1 rounded-xl bg-destructive text-destructive-foreground px-4 py-2 text-xs font-semibold hover:bg-destructive/90 transition flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+                >
+                  <Trash2 className="size-3.5" />
+                  <span>Xóa</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </MessageScrollerProvider>
   )
