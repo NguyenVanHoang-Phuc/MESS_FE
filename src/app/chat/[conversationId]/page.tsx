@@ -779,6 +779,44 @@ export default function ConversationPage() {
                       const timeStr = formatMessageTime(message.sentAt)
                       const attachments = message.attachments || []
 
+                      // Date separator: show when date changes between consecutive messages
+                      const prevMessage = virtualRow.index > 0 ? visibleMessages[virtualRow.index - 1] : null
+                      const showDateSeparator = (() => {
+                        if (!message.sentAt) return false
+                        if (!prevMessage?.sentAt) return virtualRow.index === 0
+                        const curr = new Date(message.sentAt)
+                        const prev = new Date(prevMessage.sentAt)
+                        return (
+                          curr.getFullYear() !== prev.getFullYear() ||
+                          curr.getMonth() !== prev.getMonth() ||
+                          curr.getDate() !== prev.getDate()
+                        )
+                      })()
+
+                      const dateSeparatorLabel = (() => {
+                        if (!message.sentAt) return ""
+                        const d = new Date(message.sentAt)
+                        const now = new Date()
+                        const isToday =
+                          d.getDate() === now.getDate() &&
+                          d.getMonth() === now.getMonth() &&
+                          d.getFullYear() === now.getFullYear()
+                        const yesterday = new Date(now)
+                        yesterday.setDate(now.getDate() - 1)
+                        const isYesterday =
+                          d.getDate() === yesterday.getDate() &&
+                          d.getMonth() === yesterday.getMonth() &&
+                          d.getFullYear() === yesterday.getFullYear()
+                        if (isToday) return "Hôm nay"
+                        if (isYesterday) return "Hôm qua"
+                        return d.toLocaleDateString("vi-VN", {
+                          weekday: "long",
+                          day: "2-digit",
+                          month: "2-digit",
+                          year: "numeric",
+                        })
+                      })()
+
                       // Filter other readers (excluding myself)
                       const readers = (message.reads || []).filter(
                         (r) => r.userId && r.userId !== currentUser?.userId && r.fullName !== currentUser?.fullName
@@ -814,6 +852,16 @@ export default function ConversationPage() {
                             transform: `translateY(${virtualRow.start}px)`,
                           }}
                         >
+                          {/* Date Separator */}
+                          {showDateSeparator && (
+                            <div className="flex items-center gap-3 px-2 py-3 select-none">
+                              <div className="h-px flex-1 bg-border/60" />
+                              <span className="shrink-0 rounded-full border border-border bg-card px-3 py-0.5 text-[11px] font-medium text-muted-foreground shadow-xs">
+                                {dateSeparatorLabel}
+                              </span>
+                              <div className="h-px flex-1 bg-border/60" />
+                            </div>
+                          )}
                           <Message
                             align={isOwn ? "end" : "start"}
                             className="mb-4 group/msg relative"
