@@ -167,27 +167,38 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
       const target = prev.find((c) => c.id === incomingMessage.conversationId)
       if (target?.title) convTitle = target.title
 
-      return prev.map((c) => {
-        if (c.id === incomingMessage.conversationId) {
-          const isCurrentOpen = conversationId === c.id
-          const newCount = isCurrentOpen || isFromMe ? 0 : (c.unreadCount || 0) + 1
-          return {
-            ...c,
-            lastMessage: {
-              id: incomingMessage.id,
-              content:
-                incomingMessage.content ||
-                (incomingMessage.attachments && incomingMessage.attachments.length > 0
-                  ? `[Đã gửi ${incomingMessage.attachments.length} tệp đính kèm]`
-                  : ""),
-              senderName: incomingMessage.senderName,
-              sentAt: incomingMessage.sentAt,
-            },
-            unreadCount: newCount,
-          }
-        }
-        return c
-      })
+      if (!target) {
+        loadConversations()
+        return prev
+      }
+
+      const isCurrentOpen = conversationId === incomingMessage.conversationId
+      const newCount = isCurrentOpen || isFromMe ? 0 : (target.unreadCount || 0) + 1
+
+      const messagePreview =
+        incomingMessage.content && incomingMessage.content.trim()
+          ? incomingMessage.content
+          : (incomingMessage.attachments && incomingMessage.attachments.length > 0
+              ? (incomingMessage.attachments.some((a) => (a.fileType || '').startsWith('image/') || /\.(jpg|jpeg|png|webp|gif)$/i.test(a.fileUrl))
+                  ? (incomingMessage.attachments.length > 1 ? `[Đã gửi ${incomingMessage.attachments.length} hình ảnh]` : "[Hình ảnh]")
+                  : incomingMessage.attachments.some((a) => (a.fileType || '').startsWith('video/') || /\.(mp4|mov)$/i.test(a.fileUrl))
+                    ? "[Video]"
+                    : (incomingMessage.attachments.length > 1 ? `[Đã gửi ${incomingMessage.attachments.length} tệp đính kèm]` : `[Tệp] ${incomingMessage.attachments[0].fileName || 'Đính kèm'}`))
+              : "[Đã gửi một hình ảnh/tệp]")
+
+      const updatedItem: ConversationResponse = {
+        ...target,
+        lastMessage: {
+          id: incomingMessage.id,
+          content: messagePreview,
+          senderName: incomingMessage.senderName,
+          sentAt: incomingMessage.sentAt,
+        },
+        unreadCount: newCount,
+      }
+
+      const rest = prev.filter((c) => c.id !== incomingMessage.conversationId)
+      return [updatedItem, ...rest]
     })
 
     // 2. Business Rule: DO NOT notify if user is currently looking at this conversation
@@ -204,16 +215,21 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
     playNotificationSound()
 
     // 6. Set In-App Toast notification
+    const messagePreviewForToast =
+      incomingMessage.content && incomingMessage.content.trim()
+        ? incomingMessage.content
+        : (incomingMessage.attachments && incomingMessage.attachments.length > 0
+            ? (incomingMessage.attachments.some((a) => (a.fileType || '').startsWith('image/') || /\.(jpg|jpeg|png|webp|gif)$/i.test(a.fileUrl))
+                ? (incomingMessage.attachments.length > 1 ? `[Đã gửi ${incomingMessage.attachments.length} hình ảnh]` : "[Hình ảnh]")
+                : "[Tệp đính kèm]")
+            : "[Đã gửi một hình ảnh/tệp]")
+
     setToastNotification({
       id: incomingMessage.id,
       conversationId: incomingMessage.conversationId,
       title: convTitle,
       senderName: incomingMessage.senderName,
-      content:
-        incomingMessage.content ||
-        (incomingMessage.attachments && incomingMessage.attachments.length > 0
-          ? `[Đã gửi ${incomingMessage.attachments.length} tệp đính kèm]`
-          : ""),
+      content: messagePreviewForToast,
       time: formatMessageTime(incomingMessage.sentAt),
     })
 
@@ -364,7 +380,33 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
       ? "GR"
       : (otherParticipant?.fullName ? otherParticipant.fullName.substring(0, 2).toUpperCase() : name.substring(0, 2).toUpperCase())
 
-    const preview = item.lastMessage?.content || "Chưa có tin nhắn"
+    let preview = "Chưa có tin nhắn"
+    if (item.lastMessage) {
+      const isFromMe =
+        (currentUser?.userId && item.lastMessage.senderId === currentUser.userId) ||
+        item.lastMessage.senderName === currentUser?.fullName ||
+        item.lastMessage.senderName === "Tôi"
+
+      let text = item.lastMessage.content?.trim() || ""
+
+      if (!text) {
+        text = "📷 [Hình ảnh]"
+      } else if (text === "[Hình ảnh]" || text.includes("hình ảnh")) {
+        text = text.startsWith("📷") ? text : `📷 ${text}`
+      } else if (text === "[Video]" || text.includes("video")) {
+        text = text.startsWith("🎥") ? text : `🎥 ${text}`
+      } else if (text.startsWith("[Tệp") || text.includes("tệp")) {
+        text = text.startsWith("📁") ? text : `📁 ${text}`
+      }
+
+      if (isFromMe) {
+        preview = `Bạn: ${text}`
+      } else if (isGroup && item.lastMessage.senderName) {
+        preview = `${item.lastMessage.senderName}: ${text}`
+      } else {
+        preview = text
+      }
+    }
     const time = formatMessageTime(item.lastMessage?.sentAt)
     const members = item.participants?.length || 2
     return { isGroup, name, avatarText, preview, time, members, otherParticipant }

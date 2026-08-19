@@ -1,6 +1,6 @@
 "use client"
 
-import { FormEvent, useEffect, useState, useRef, ChangeEvent, DragEvent, ClipboardEvent } from "react"
+import { FormEvent, useEffect, useState, useRef, ChangeEvent, DragEvent, ClipboardEvent, useCallback } from "react"
 import {
   AlertCircle,
   ArrowDown,
@@ -93,6 +93,17 @@ export default function ConversationPage() {
     estimateSize: () => 90,
     overscan: 8,
   })
+
+  // Safe measureElement ref callback to prevent React 18/19 flushSync inside lifecycle warning
+  const measureElementRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (!node) return
+      queueMicrotask(() => {
+        rowVirtualizer.measureElement(node)
+      })
+    },
+    [rowVirtualizer]
+  )
 
   // Scroll to the very last message
   function scrollToBottom() {
@@ -476,6 +487,10 @@ export default function ConversationPage() {
 
     const newItems: SelectedFileItem[] = []
     for (const file of rawFiles) {
+      if (file.size === 0) {
+        setUploadError(`Tệp "${file.name}" bị rỗng (0 KB). Vui lòng chọn tệp hợp lệ.`)
+        return
+      }
       if (file.size > 25 * 1024 * 1024) {
         setUploadError(`Tệp "${file.name}" vượt quá dung lượng tối đa 25MB.`)
         return
@@ -915,7 +930,7 @@ export default function ConversationPage() {
                         <div
                           key={message.id || virtualRow.key}
                           data-index={virtualRow.index}
-                          ref={rowVirtualizer.measureElement}
+                          ref={measureElementRef}
                           style={{
                             position: "absolute",
                             top: 0,

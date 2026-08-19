@@ -20,6 +20,7 @@ export interface ParticipantResponse {
 export interface MessageSummaryResponse {
   id: string
   content?: string
+  senderId?: string
   senderName: string
   sentAt: string
 }

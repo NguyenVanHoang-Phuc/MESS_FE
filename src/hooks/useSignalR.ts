@@ -32,9 +32,7 @@ export function useSignalR(conversationId?: string | null) {
     startConnection()
 
     const handleMessage = (message: MessageResponse) => {
-      if (!conversationId || message.conversationId === conversationId) {
-        setIncomingMessage(message)
-      }
+      setIncomingMessage(message)
     }
 
     const handleNewConversation = (conversation: ConversationResponse) => {
@@ -56,9 +54,7 @@ export function useSignalR(conversationId?: string | null) {
         messageIds: eventData.messageIds || eventData.MessageIds || [],
         readAt: eventData.readAt || eventData.ReadAt || new Date().toISOString(),
       }
-      if (!conversationId || normalized.conversationId === conversationId) {
-        setReadEvent(normalized)
-      }
+      setReadEvent(normalized)
     }
 
     const handleMessageRecalled = (eventData: any) => {
@@ -67,9 +63,7 @@ export function useSignalR(conversationId?: string | null) {
         conversationId: eventData.conversationId || eventData.ConversationId,
         messageId: eventData.messageId || eventData.MessageId,
       }
-      if (!conversationId || normalized.conversationId === conversationId) {
-        setRecalledEvent(normalized)
-      }
+      setRecalledEvent(normalized)
     }
 
     const handleMessageReaction = (eventData: any) => {
@@ -79,9 +73,7 @@ export function useSignalR(conversationId?: string | null) {
         messageId: eventData.messageId || eventData.MessageId,
         reactions: eventData.reactions || eventData.Reactions || [],
       }
-      if (!conversationId || normalized.conversationId === conversationId) {
-        setReactionEvent(normalized)
-      }
+      setReactionEvent(normalized)
     }
 
     const handleUserTyping = (eventData: any) => {
@@ -91,9 +83,7 @@ export function useSignalR(conversationId?: string | null) {
         userName: eventData.userName || eventData.UserName,
         isTyping: eventData.isTyping ?? eventData.IsTyping ?? false,
       }
-      if (!conversationId || normalized.conversationId === conversationId) {
-        setTypingEvent(normalized)
-      }
+      setTypingEvent(normalized)
     }
 
     connection.on('ReceiveNewMessage', handleMessage)

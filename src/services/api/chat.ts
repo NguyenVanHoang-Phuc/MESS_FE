@@ -266,8 +266,11 @@ export async function uploadFilesApi(files: File[]): Promise<FileUploadResponse[
     throw new Error('Bạn chỉ có thể tải lên tối đa 30 tệp mỗi lần gửi.')
   }
 
-  // Validate file sizes (< 25MB)
+  // Validate file sizes and empty files
   for (const file of files) {
+    if (file.size === 0) {
+      throw new Error(`Tệp "${file.name}" bị rỗng (0 KB). Vui lòng chọn tệp hợp lệ.`)
+    }
     if (file.size > 25 * 1024 * 1024) {
       throw new Error(`Tệp "${file.name}" vượt quá dung lượng tối đa 25MB.`)
     }
@@ -278,16 +281,25 @@ export async function uploadFilesApi(files: File[]): Promise<FileUploadResponse[
     formData.append('files', file)
   }
 
-  const response = await api.post<any>('/files/upload', formData, {
-    headers: {
-      'Content-Type': 'multipart/form-data',
-    },
-  })
+  try {
+    const response = await api.post<any>('/files/upload', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    })
 
-  if (response.data?.success && response.data.data) {
-    return response.data.data
+    if (response.data?.success && response.data.data) {
+      return response.data.data
+    }
+    return []
+  } catch (err: any) {
+    const errMsg =
+      err.response?.data?.message ||
+      err.response?.data?.error ||
+      err.message ||
+      'Tải tệp lên thất bại. Vui lòng thử lại.'
+    throw new Error(errMsg)
   }
-  return []
 }
 
 export async function sendMessageApi(
