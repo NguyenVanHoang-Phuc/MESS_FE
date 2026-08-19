@@ -6,7 +6,13 @@ import {
   AlertTriangle,
   Bell,
   BellOff,
+  ChevronLeft,
+  ChevronRight,
   Download,
+  ExternalLink,
+  File,
+  FileArchive,
+  FileSpreadsheet,
   FileText,
   ImageIcon,
   Info,
@@ -61,9 +67,50 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
   const [searchSidebar, setSearchSidebar] = useState("")
   const [mutedConversations, setMutedConversations] = useState<string[]>([])
   const [toastNotification, setToastNotification] = useState<ToastNotificationItem | null>(null)
+  const [showGallery, setShowGallery] = useState(false)
+  const [galleryIndex, setGalleryIndex] = useState(0)
+  const [showDocumentsModal, setShowDocumentsModal] = useState(false)
+  const [docSearchQuery, setDocSearchQuery] = useState("")
 
-  const { incomingMessage, incomingConversation, deletedConversationId } = useSignalR()
+  const { incomingMessage, incomingConversation, deletedConversationId, typingEvent } = useSignalR(conversationId)
   const lastHandledMessageIdRef = useRef<string | null>(null)
+  const [headerTypingUser, setHeaderTypingUser] = useState<string | null>(null)
+  const headerTypingTimerRef = useRef<NodeJS.Timeout | null>(null)
+
+  useEffect(() => {
+    if (!typingEvent || typingEvent.conversationId !== conversationId) return
+    const isMe =
+      (currentUser?.userId && typingEvent.userId === currentUser.userId) ||
+      (currentUser?.fullName && typingEvent.userName === currentUser.fullName)
+    if (isMe) return
+
+    if (typingEvent.isTyping) {
+      setHeaderTypingUser(typingEvent.userName)
+      if (headerTypingTimerRef.current) clearTimeout(headerTypingTimerRef.current)
+      headerTypingTimerRef.current = setTimeout(() => {
+        setHeaderTypingUser(null)
+      }, 3500)
+    } else {
+      setHeaderTypingUser(null)
+      if (headerTypingTimerRef.current) clearTimeout(headerTypingTimerRef.current)
+    }
+  }, [typingEvent, conversationId, currentUser])
+
+  // Realtime: Listen to local message sent events with attachments
+  useEffect(() => {
+    const handleLocalSent = (e: any) => {
+      const atts = e.detail?.attachments || []
+      if (atts.length > 0) {
+        setConversationAttachments((prev) => {
+          const existingUrls = new Set(prev.map((a) => a.fileUrl))
+          const newAtts = atts.filter((a: any) => !existingUrls.has(a.fileUrl))
+          return [...prev, ...newAtts]
+        })
+      }
+    }
+    window.addEventListener('nexus:messageSent', handleLocalSent)
+    return () => window.removeEventListener('nexus:messageSent', handleLocalSent)
+  }, [])
 
   // Initialize muted conversations and request native notification permission
   useEffect(() => {
@@ -268,6 +315,17 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
     }
     loadAttachments()
   }, [conversationId, incomingConversation])
+
+  // Realtime: update sidebar attachments immediately when new message with images arrives
+  useEffect(() => {
+    if (!incomingMessage || incomingMessage.conversationId !== conversationId) return
+    if (!incomingMessage.attachments || incomingMessage.attachments.length === 0) return
+    setConversationAttachments((prev) => {
+      const existingIds = new Set(prev.map((a) => a.id))
+      const newAtts = incomingMessage.attachments!.filter((a) => !existingIds.has(a.id))
+      return [...prev, ...newAtts]
+    })
+  }, [incomingMessage, conversationId])
 
   async function loadConversations() {
     const user = getCurrentUser()
@@ -694,9 +752,16 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
                 <div className="min-w-0">
                   <h2 className="truncate text-sm font-semibold">{selectedInfo.name}</h2>
                   <p className="text-xs text-muted-foreground">
-                    {selectedInfo.isGroup
-                      ? `${selectedInfo.members} thành viên ${isCurrentUserAdmin ? '· Bạn là Quản trị viên' : ''}`
-                      : "Trực tuyến"}
+                    {headerTypingUser ? (
+                      <span className="text-primary font-medium flex items-center gap-1.5 animate-pulse">
+                        <span className="size-1.5 rounded-full bg-primary animate-ping" />
+                        <span>{headerTypingUser} đang nhập tin nhắn...</span>
+                      </span>
+                    ) : selectedInfo.isGroup ? (
+                      `${selectedInfo.members} thành viên ${isCurrentUserAdmin ? '· Bạn là Quản trị viên' : ''}`
+                    ) : (
+                      "Trực tuyến"
+                    )}
                   </p>
                 </div>
               </>
@@ -904,9 +969,21 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
           <div className="flex flex-col gap-5 p-5">
             {/* Shared Media */}
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Ảnh & Video đã chia sẻ ({conversationAttachments.filter((a) => (a.fileType || '').startsWith('image/') || /\.(jpg|jpeg|png|gif|webp)$/i.test(a.fileUrl)).length})
-              </p>
+              <div className="flex items-center justify-between mb-2.5">
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Ảnh &amp; Video đã chia sẻ ({conversationAttachments.filter((a) => (a.fileType || '').startsWith('image/') || /\.(jpg|jpeg|png|gif|webp)$/i.test(a.fileUrl)).length})
+                </p>
+                {conversationAttachments.filter((a) => (a.fileType || '').startsWith('image/') || /\.(jpg|jpeg|png|gif|webp)$/i.test(a.fileUrl)).length > 0 && (
+                  <button
+                    onClick={() => { setGalleryIndex(0); setShowGallery(true) }}
+                    className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-primary hover:bg-primary/10 transition"
+                    title="Xem tất cả ảnh"
+                  >
+                    <Plus className="size-3" />
+                    <span>Xem tất cả</span>
+                  </button>
+                )}
+              </div>
               {conversationAttachments.filter((a) => (a.fileType || '').startsWith('image/') || /\.(jpg|jpeg|png|gif|webp)$/i.test(a.fileUrl)).length === 0 ? (
                 <p className="mt-2 text-[11px] text-muted-foreground">Chưa có ảnh hoặc video nào</p>
               ) : (
@@ -918,12 +995,13 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
                       const fullUrl = att.fileUrl.startsWith('http') || att.fileUrl.startsWith('blob')
                         ? att.fileUrl
                         : `${process.env.NEXT_PUBLIC_API_URL?.replace('/api', '') || 'http://localhost:5011'}${att.fileUrl.startsWith('/') ? '' : '/'}${att.fileUrl}`
+                      const isLast = idx === 5
+                      const totalImages = conversationAttachments.filter((a) => (a.fileType || '').startsWith('image/') || /\.(jpg|jpeg|png|gif|webp)$/i.test(a.fileUrl)).length
+                      const remainingCount = totalImages - 6
                       return (
-                        <a
+                        <button
                           key={att.id || idx}
-                          href={fullUrl}
-                          target="_blank"
-                          rel="noreferrer"
+                          onClick={() => { setGalleryIndex(idx); setShowGallery(true) }}
                           className="group relative block aspect-square overflow-hidden rounded-lg bg-muted"
                         >
                           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -932,7 +1010,16 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
                             alt={att.fileName}
                             className="size-full object-cover transition group-hover:scale-105"
                           />
-                        </a>
+                          {/* Overlay for last item showing remaining count */}
+                          {isLast && remainingCount > 0 && (
+                            <div
+                              onClick={(e) => { e.stopPropagation(); e.preventDefault(); setGalleryIndex(5); setShowGallery(true) }}
+                              className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-[1px] cursor-pointer"
+                            >
+                              <span className="text-white font-bold text-base">+{remainingCount}</span>
+                            </div>
+                          )}
+                        </button>
                       )
                     })}
                 </div>
@@ -941,9 +1028,21 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
 
             {/* Shared Documents */}
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Tệp & Tài liệu ({conversationAttachments.filter((a) => !(a.fileType || '').startsWith('image/') && !/\.(jpg|jpeg|png|gif|webp)$/i.test(a.fileUrl)).length})
-              </p>
+              <div className="flex items-center justify-between mb-2.5">
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Tệp &amp; Tài liệu ({conversationAttachments.filter((a) => !(a.fileType || '').startsWith('image/') && !/\.(jpg|jpeg|png|gif|webp)$/i.test(a.fileUrl)).length})
+                </p>
+                {conversationAttachments.filter((a) => !(a.fileType || '').startsWith('image/') && !/\.(jpg|jpeg|png|gif|webp)$/i.test(a.fileUrl)).length > 0 && (
+                  <button
+                    onClick={() => { setDocSearchQuery(""); setShowDocumentsModal(true) }}
+                    className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-primary hover:bg-primary/10 transition cursor-pointer"
+                    title="Mở rộng xem toàn bộ tệp & tài liệu"
+                  >
+                    <Plus className="size-3.5" />
+                    <span>Xem tất cả</span>
+                  </button>
+                )}
+              </div>
               {conversationAttachments.filter((a) => !(a.fileType || '').startsWith('image/') && !/\.(jpg|jpeg|png|gif|webp)$/i.test(a.fileUrl)).length === 0 ? (
                 <p className="mt-2 text-[11px] text-muted-foreground">Chưa có tệp tài liệu nào</p>
               ) : (
@@ -990,6 +1089,246 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
           </div>
         </aside>
       )}
+
+      {/* Full Gallery Lightbox Modal */}
+      {showGallery && (() => {
+        const allImages = conversationAttachments
+          .filter((a) => (a.fileType || '').startsWith('image/') || /\.(jpg|jpeg|png|gif|webp)$/i.test(a.fileUrl))
+          .map((att) =>
+            att.fileUrl.startsWith('http') || att.fileUrl.startsWith('blob')
+              ? att.fileUrl
+              : `${process.env.NEXT_PUBLIC_API_URL?.replace('/api', '') || 'http://localhost:5011'}${att.fileUrl.startsWith('/') ? '' : '/'}${att.fileUrl}`
+          )
+        const current = allImages[galleryIndex]
+        return (
+          <div
+            className="fixed inset-0 z-[100] flex flex-col bg-black/95 backdrop-blur-sm animate-in fade-in duration-200"
+            onClick={() => setShowGallery(false)}
+          >
+            {/* Top bar */}
+            <div
+              className="flex items-center justify-between px-5 py-3 shrink-0"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <span className="text-sm font-medium text-white/80">
+                {galleryIndex + 1} / {allImages.length} &mdash; Ảnh &amp; Video đã chia sẻ
+              </span>
+              <button
+                onClick={() => setShowGallery(false)}
+                className="flex size-8 items-center justify-center rounded-full text-white/70 hover:bg-white/10 hover:text-white transition"
+              >
+                <X className="size-5" />
+              </button>
+            </div>
+
+            {/* Main image viewer */}
+            <div
+              className="flex flex-1 items-center justify-center relative min-h-0 px-14"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Prev */}
+              {galleryIndex > 0 && (
+                <button
+                  onClick={() => setGalleryIndex((i) => i - 1)}
+                  className="absolute left-3 flex size-10 items-center justify-center rounded-full bg-white/10 hover:bg-white/20 text-white transition cursor-pointer"
+                >
+                  <ChevronLeft className="size-6" />
+                </button>
+              )}
+
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                key={current}
+                src={current}
+                alt={`Ảnh ${galleryIndex + 1}`}
+                className="max-h-full max-w-full rounded-xl object-contain shadow-2xl animate-in zoom-in-95 duration-150"
+              />
+
+              {/* Next */}
+              {galleryIndex < allImages.length - 1 && (
+                <button
+                  onClick={() => setGalleryIndex((i) => i + 1)}
+                  className="absolute right-3 flex size-10 items-center justify-center rounded-full bg-white/10 hover:bg-white/20 text-white transition cursor-pointer"
+                >
+                  <ChevronRight className="size-6" />
+                </button>
+              )}
+            </div>
+
+            {/* Thumbnails strip */}
+            <div
+              className="flex shrink-0 gap-1.5 overflow-x-auto px-5 py-3 scrollbar-thin"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {allImages.map((url, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => setGalleryIndex(idx)}
+                  className={`shrink-0 size-14 overflow-hidden rounded-lg border-2 transition ${
+                    idx === galleryIndex ? 'border-primary scale-105' : 'border-transparent opacity-60 hover:opacity-100'
+                  }`}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={url} alt={`Ảnh ${idx + 1}`} className="size-full object-cover" />
+                </button>
+              ))}
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* Full Shared Documents Modal */}
+      {showDocumentsModal && (() => {
+        const allDocs = conversationAttachments.filter(
+          (a) => !(a.fileType || '').startsWith('image/') && !/\.(jpg|jpeg|png|gif|webp)$/i.test(a.fileUrl)
+        )
+        const filteredDocs = docSearchQuery.trim()
+          ? allDocs.filter((d) => d.fileName?.toLowerCase().includes(docSearchQuery.toLowerCase()))
+          : allDocs
+
+        const getDocIcon = (fileName: string) => {
+          const ext = fileName?.split('.').pop()?.toLowerCase() || ''
+          if (['pdf'].includes(ext)) return <FileText className="size-5 text-red-500" />
+          if (['xls', 'xlsx', 'csv'].includes(ext)) return <FileSpreadsheet className="size-5 text-emerald-500" />
+          if (['doc', 'docx'].includes(ext)) return <FileText className="size-5 text-blue-500" />
+          if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) return <FileArchive className="size-5 text-amber-500" />
+          return <File className="size-5 text-muted-foreground" />
+        }
+
+        return (
+          <div
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-background/80 backdrop-blur-sm p-4 animate-in fade-in duration-200"
+            onClick={() => setShowDocumentsModal(false)}
+          >
+            <div
+              className="flex flex-col w-full max-w-2xl max-h-[85vh] bg-card border rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Modal Header */}
+              <div className="flex items-center justify-between px-6 py-4 border-b">
+                <div className="flex items-center gap-3">
+                  <div className="flex size-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                    <FileText className="size-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-base">Tệp &amp; Tài liệu đã chia sẻ</h3>
+                    <p className="text-xs text-muted-foreground">
+                      Tổng cộng {allDocs.length} tệp tài liệu trong cuộc trò chuyện này
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowDocumentsModal(false)}
+                  className="flex size-8 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground transition"
+                >
+                  <X className="size-4" />
+                </button>
+              </div>
+
+              {/* Search Box */}
+              <div className="px-6 py-3 border-b bg-muted/20">
+                <div className="flex items-center gap-2 rounded-xl border bg-background px-3 py-2">
+                  <Search className="size-4 text-muted-foreground shrink-0" />
+                  <input
+                    type="text"
+                    value={docSearchQuery}
+                    onChange={(e) => setDocSearchQuery(e.target.value)}
+                    placeholder="Tìm kiếm tài liệu theo tên..."
+                    className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
+                    autoFocus
+                  />
+                  {docSearchQuery && (
+                    <button onClick={() => setDocSearchQuery("")} className="text-muted-foreground hover:text-foreground">
+                      <X className="size-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Document List */}
+              <div className="flex-1 overflow-y-auto p-6 space-y-2.5 min-h-[220px]">
+                {filteredDocs.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
+                    <FileText className="size-10 mb-2 opacity-30" />
+                    <p className="text-sm font-medium">Không tìm thấy tài liệu phù hợp</p>
+                    {docSearchQuery && (
+                      <p className="mt-1 text-xs text-muted-foreground/80">Thử tìm kiếm với từ khóa khác</p>
+                    )}
+                  </div>
+                ) : (
+                  filteredDocs.map((att, idx) => {
+                    const fullUrl = att.fileUrl.startsWith('http') || att.fileUrl.startsWith('blob')
+                      ? att.fileUrl
+                      : `${process.env.NEXT_PUBLIC_API_URL?.replace('/api', '') || 'http://localhost:5011'}${att.fileUrl.startsWith('/') ? '' : '/'}${att.fileUrl}`
+                    return (
+                      <div
+                        key={att.id || idx}
+                        className="flex items-center justify-between gap-3 rounded-xl border p-3.5 bg-muted/20 hover:bg-muted/50 transition group"
+                      >
+                        <div className="flex items-center gap-3.5 min-w-0 flex-1">
+                          <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-card border shadow-2xs">
+                            {getDocIcon(att.fileName)}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <a
+                              href={fullUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="font-medium text-xs text-foreground hover:text-primary transition truncate block"
+                              title={att.fileName}
+                            >
+                              {att.fileName}
+                            </a>
+                            <div className="flex items-center gap-2 mt-0.5 text-[11px] text-muted-foreground">
+                              {att.fileSize ? <span>{formatFileSize(att.fileSize)}</span> : null}
+                              {att.fileType ? <span>&bull; {att.fileType}</span> : null}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <a
+                            href={fullUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition"
+                            title="Mở xem trong tab mới"
+                          >
+                            <ExternalLink className="size-3.5" />
+                            <span className="hidden sm:inline">Xem</span>
+                          </a>
+                          <a
+                            href={fullUrl}
+                            download={att.fileName}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="flex items-center gap-1 rounded-lg bg-primary/10 px-2.5 py-1.5 text-xs font-medium text-primary hover:bg-primary/20 transition"
+                            title="Tải tệp về máy"
+                          >
+                            <Download className="size-3.5" />
+                            <span className="hidden sm:inline">Tải về</span>
+                          </a>
+                        </div>
+                      </div>
+                    )
+                  })
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="flex items-center justify-between px-6 py-3.5 border-t bg-muted/30 text-xs text-muted-foreground">
+                <span>Hiển thị {filteredDocs.length} / {allDocs.length} tệp</span>
+                <button
+                  onClick={() => setShowDocumentsModal(false)}
+                  className="px-4 py-1.5 rounded-lg border bg-background hover:bg-muted text-foreground transition font-medium cursor-pointer"
+                >
+                  Đóng
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }

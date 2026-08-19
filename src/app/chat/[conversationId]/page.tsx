@@ -63,12 +63,18 @@ export default function ConversationPage() {
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
-  const { incomingMessage, readEvent, recalledEvent, reactionEvent } = useSignalR(conversationId)
+  const { incomingMessage, readEvent, recalledEvent, reactionEvent, typingEvent, sendTyping } = useSignalR(conversationId)
   const [currentUser, setCurrentUser] = useState<any>(null)
   const [hiddenMessageIds, setHiddenMessageIds] = useState<string[]>([])
   const [recallingMessageId, setRecallingMessageId] = useState<string | null>(null)
   const [confirmRecallId, setConfirmRecallId] = useState<string | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+
+  // Live Typing Indicators
+  const [typingUsers, setTypingUsers] = useState<{ userId: string; userName: string }[]>([])
+  const typingTimerRef = useRef<{ [key: string]: NodeJS.Timeout }>({})
+  const isSelfTypingRef = useRef(false)
+  const selfTypingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   // Cursor Pagination States (Performance Optimization)
   const [nextCursor, setNextCursor] = useState<string | null>(null)
@@ -117,6 +123,39 @@ export default function ConversationPage() {
       markConversationAsReadApi(conversationId)
     }
   }, [conversationId, incomingMessage])
+
+  // Handle incoming realtime Typing Events from other participants
+  useEffect(() => {
+    if (!typingEvent || typingEvent.conversationId !== conversationId) return
+    const isMe =
+      (currentUser?.userId && typingEvent.userId === currentUser.userId) ||
+      (currentUser?.fullName && typingEvent.userName === currentUser.fullName)
+
+    if (isMe) return
+
+    const { userId, userName, isTyping } = typingEvent
+    const key = userId || userName
+
+    if (isTyping) {
+      setTypingUsers((prev) => {
+        if (prev.some((u) => u.userId === userId || u.userName === userName)) return prev
+        return [...prev, { userId, userName }]
+      })
+
+      // Auto-clear typing status after 3.5 seconds if user stops typing without firing stop event
+      if (typingTimerRef.current[key]) {
+        clearTimeout(typingTimerRef.current[key])
+      }
+      typingTimerRef.current[key] = setTimeout(() => {
+        setTypingUsers((prev) => prev.filter((u) => (u.userId ? u.userId !== userId : u.userName !== userName)))
+      }, 3500)
+    } else {
+      if (typingTimerRef.current[key]) {
+        clearTimeout(typingTimerRef.current[key])
+      }
+      setTypingUsers((prev) => prev.filter((u) => (u.userId ? u.userId !== userId : u.userName !== userName)))
+    }
+  }, [typingEvent, conversationId, currentUser])
 
   // Listen for real-time incoming SignalR messages and prevent duplicates
   useEffect(() => {
@@ -568,6 +607,13 @@ export default function ConversationPage() {
       reads: [],
     }
 
+    // Stop typing indicator immediately on send
+    if (selfTypingTimeoutRef.current) {
+      clearTimeout(selfTypingTimeoutRef.current)
+    }
+    isSelfTypingRef.current = false
+    sendTyping(false, currentUser?.fullName || "Tôi")
+
     setMessages((prev) => [...prev, tempMessage])
     setDraft("")
     handleClearAllFiles()
@@ -575,6 +621,9 @@ export default function ConversationPage() {
     // 3. Send message with attachments to backend
     const sentMessage = await sendMessageApi(conversationId, text, uploadedAttachments)
     if (sentMessage) {
+      if (typeof window !== "undefined" && sentMessage.attachments && sentMessage.attachments.length > 0) {
+        window.dispatchEvent(new CustomEvent("nexus:messageSent", { detail: sentMessage }))
+      }
       setMessages((prev) => {
         const alreadyAddedBySignalR = prev.some((m) => m.id === sentMessage.id)
         if (alreadyAddedBySignalR) {
@@ -781,6 +830,8 @@ export default function ConversationPage() {
 
                       // Date separator: show when date changes between consecutive messages
                       const prevMessage = virtualRow.index > 0 ? visibleMessages[virtualRow.index - 1] : null
+                      const nextMessage = virtualRow.index < visibleMessages.length - 1 ? visibleMessages[virtualRow.index + 1] : null
+
                       const showDateSeparator = (() => {
                         if (!message.sentAt) return false
                         if (!prevMessage?.sentAt) return virtualRow.index === 0
@@ -792,6 +843,27 @@ export default function ConversationPage() {
                           curr.getDate() !== prev.getDate()
                         )
                       })()
+
+                      // Consecutive message grouping (no time limit - all consecutive messages from same sender)
+                      const isSameSenderAsNext = Boolean(
+                        nextMessage &&
+                        ((message.senderId && nextMessage.senderId && message.senderId === nextMessage.senderId) ||
+                         (message.senderName && nextMessage.senderName && message.senderName === nextMessage.senderName))
+                      )
+
+                      const nextHasDateSeparator = (() => {
+                        if (!nextMessage?.sentAt || !message?.sentAt) return false
+                        const curr = new Date(message.sentAt)
+                        const next = new Date(nextMessage.sentAt)
+                        return (
+                          curr.getFullYear() !== next.getFullYear() ||
+                          curr.getMonth() !== next.getMonth() ||
+                          curr.getDate() !== next.getDate()
+                        )
+                      })()
+
+                      // isLastInGroup: True if this is the last consecutive message from this sender before someone else talks or date changes
+                      const isLastInGroup = !isSameSenderAsNext || nextHasDateSeparator
 
                       const dateSeparatorLabel = (() => {
                         if (!message.sentAt) return ""
@@ -862,32 +934,39 @@ export default function ConversationPage() {
                               <div className="h-px flex-1 bg-border/60" />
                             </div>
                           )}
+
                           <Message
                             align={isOwn ? "end" : "start"}
-                            className="mb-4 group/msg relative"
+                            className={cn("relative", isLastInGroup ? "mb-4" : "mb-1")}
                           >
-                            <MessageAvatar className="size-8 border bg-card text-xs font-semibold shrink-0">
-                              <span className="sr-only">{isOwn ? "Bạn" : message.senderName}</span>
-                              {isOwn
-                                ? (currentUser?.fullName ? currentUser.fullName.substring(0, 2).toUpperCase() : "AN")
-                                : (message.senderName ? message.senderName.substring(0, 2).toUpperCase() : <User className="size-4" />)}
-                            </MessageAvatar>
+                            {isLastInGroup ? (
+                              <MessageAvatar className="size-8 border bg-card text-xs font-semibold shrink-0">
+                                <span className="sr-only">{isOwn ? "Bạn" : message.senderName}</span>
+                                {isOwn
+                                  ? (currentUser?.fullName ? currentUser.fullName.substring(0, 2).toUpperCase() : "AN")
+                                  : (message.senderName ? message.senderName.substring(0, 2).toUpperCase() : <User className="size-4" />)}
+                              </MessageAvatar>
+                            ) : (
+                              <div className="size-8 shrink-0" aria-hidden="true" />
+                            )}
                             <div className={isOwn ? "flex flex-col items-end max-w-[80%] relative" : "flex flex-col items-start max-w-[80%] relative"}>
-                              <div className="mb-1 flex items-center gap-1.5 px-1 text-[11px] text-muted-foreground">
-                                <span className="font-medium">{isOwn ? "Bạn" : message.senderName}</span>
-                                {timeStr && <span>{timeStr}</span>}
+                              {isLastInGroup && (
+                                <div className="mb-1 flex items-center gap-1.5 px-1 text-[11px] text-muted-foreground">
+                                  <span className="font-medium">{isOwn ? "Bạn" : message.senderName}</span>
+                                  {timeStr && <span>{timeStr}</span>}
 
-                                {/* Message Status Tick (For sender) */}
-                                {isOwn && !message.isRecalled && (
-                                  <span className="inline-flex items-center ml-0.5" title={isReadByOthers ? "Đã đọc" : "Đã gửi"}>
-                                    {isReadByOthers ? (
-                                      <CheckCheck className="size-3.5 text-emerald-500 font-bold" />
-                                    ) : (
-                                      <Check className="size-3 text-muted-foreground" />
-                                    )}
-                                  </span>
-                                )}
-                              </div>
+                                  {/* Message Status Tick (For sender) */}
+                                  {isOwn && !message.isRecalled && (
+                                    <span className="inline-flex items-center ml-0.5" title={isReadByOthers ? "Đã đọc" : "Đã gửi"}>
+                                      {isReadByOthers ? (
+                                        <CheckCheck className="size-3.5 text-emerald-500 font-bold" />
+                                      ) : (
+                                        <Check className="size-3 text-muted-foreground" />
+                                      )}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
 
                               {/* Recalled Message State */}
                               {message.isRecalled ? (
@@ -900,7 +979,7 @@ export default function ConversationPage() {
                                   {/* Delete button on recalled message */}
                                   <div
                                     className={cn(
-                                      "absolute -top-7.5 z-20 flex items-center rounded-full border bg-card/95 p-1 shadow-md opacity-0 group-hover/msg:opacity-100 transition duration-150 backdrop-blur-xs",
+                                      "absolute -top-7.5 z-20 flex items-center rounded-full border bg-card/95 p-1 shadow-md opacity-0 group-hover/bubble:opacity-100 transition duration-150 backdrop-blur-xs",
                                       isOwn ? "right-0" : "left-0"
                                     )}
                                   >
@@ -950,10 +1029,17 @@ export default function ConversationPage() {
                                   {/* Floating Action Bar on Hover (MES-007 & MES-008) */}
                                   <div
                                     className={cn(
-                                      "absolute -top-9.5 z-20 flex items-center gap-0.5 rounded-full border bg-card/95 p-1 shadow-md opacity-0 group-hover/msg:opacity-100 transition duration-150 backdrop-blur-xs",
+                                      "absolute -top-9.5 z-20 flex items-center gap-0.5 rounded-full border bg-card/95 p-1 shadow-md opacity-0 group-hover/bubble:opacity-100 transition duration-150 backdrop-blur-xs",
                                       isOwn ? "right-0" : "left-0"
                                     )}
                                   >
+                                    {/* Hover Timestamp */}
+                                    {timeStr && (
+                                      <span className="text-[10px] text-muted-foreground px-1.5 font-medium select-none border-r border-border pr-2 mr-0.5">
+                                        {timeStr}
+                                      </span>
+                                    )}
+
                                     {/* Quick Reaction Emojis (MES-008) */}
                                     <div className="flex items-center gap-0.5 px-1">
                                       {QUICK_REACTIONS.map((emoji) => (
@@ -976,7 +1062,7 @@ export default function ConversationPage() {
                                       <button
                                         type="button"
                                         onClick={() => setConfirmRecallId(message.id)}
-                                        className="size-6.5 flex items-center justify-center rounded-full text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition duration-100"
+                                        className="size-6.5 flex items-center justify-center rounded-full text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition duration-100 cursor-pointer"
                                         title="Thu hồi tin nhắn với mọi người"
                                       >
                                         <Undo2 className="size-3.5" />
@@ -987,7 +1073,7 @@ export default function ConversationPage() {
                                     <button
                                       type="button"
                                       onClick={() => setConfirmDeleteId(message.id)}
-                                      className="size-6.5 flex items-center justify-center rounded-full text-muted-foreground hover:text-foreground hover:bg-muted transition duration-100"
+                                      className="size-6.5 flex items-center justify-center rounded-full text-muted-foreground hover:text-foreground hover:bg-muted transition duration-100 cursor-pointer"
                                       title="Xóa ở phía tôi"
                                     >
                                       <Trash2 className="size-3.5" />
@@ -1205,7 +1291,7 @@ export default function ConversationPage() {
                               )}
 
                               {/* Small Reader Avatars Stack (When Read) */}
-                              {isOwn && isReadByOthers && (
+                              {isOwn && isReadByOthers && isLastInGroup && (
                                 <div className="mt-1 flex items-center justify-end gap-1 px-1">
                                   {readers.length === 1 && (
                                     <div
@@ -1334,6 +1420,26 @@ export default function ConversationPage() {
             </div>
           )}
 
+          {/* Live Typing Indicator */}
+          {typingUsers.length > 0 && (
+            <div className="mx-auto mb-2 flex max-w-3xl items-center gap-2 px-2 animate-in fade-in slide-in-from-bottom-2 duration-200">
+              <div className="flex size-6 items-center justify-center rounded-full bg-primary/10 text-primary text-[10px] font-bold shrink-0">
+                {typingUsers[0].userName.substring(0, 2).toUpperCase()}
+              </div>
+              <div className="flex items-center gap-2 rounded-xl bg-card border px-3 py-1.5 text-xs text-muted-foreground shadow-2xs">
+                <span className="font-medium text-foreground">
+                  {typingUsers.length === 1 ? typingUsers[0].userName : `${typingUsers.length} người`}
+                </span>
+                <span>đang nhập tin nhắn...</span>
+                <div className="flex items-center gap-1 py-0.5 ml-0.5">
+                  <span className="size-1.5 rounded-full bg-primary animate-bounce [animation-delay:-0.3s]" />
+                  <span className="size-1.5 rounded-full bg-primary animate-bounce [animation-delay:-0.15s]" />
+                  <span className="size-1.5 rounded-full bg-primary animate-bounce" />
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Form Input Box */}
           <form
             onSubmit={handleSendMessage}
@@ -1368,7 +1474,24 @@ export default function ConversationPage() {
 
             <textarea
               value={draft}
-              onChange={(event) => setDraft(event.target.value)}
+              onChange={(event) => {
+                const val = event.target.value
+                setDraft(val)
+                if (conversationId) {
+                  const myName = currentUser?.fullName || "Tôi"
+                  if (!isSelfTypingRef.current && val.trim().length > 0) {
+                    isSelfTypingRef.current = true
+                    sendTyping(true, myName)
+                  }
+                  if (selfTypingTimeoutRef.current) {
+                    clearTimeout(selfTypingTimeoutRef.current)
+                  }
+                  selfTypingTimeoutRef.current = setTimeout(() => {
+                    isSelfTypingRef.current = false
+                    sendTyping(false, myName)
+                  }, 2500)
+                }
+              }}
               onPaste={handlePaste}
               onKeyDown={(event) => {
                 if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) {

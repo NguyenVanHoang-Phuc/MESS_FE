@@ -60,6 +60,13 @@ export interface MessagesReadEvent {
   readAt: string
 }
 
+export interface UserTypingEvent {
+  conversationId: string
+  userId: string
+  userName: string
+  isTyping: boolean
+}
+
 export interface AttachmentResponse {
   id?: string
   fileName: string
