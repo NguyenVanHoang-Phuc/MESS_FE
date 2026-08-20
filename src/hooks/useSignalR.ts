@@ -5,6 +5,7 @@ import type { TaskResponse } from '@/types/task'
 
 export function useSignalR(conversationId?: string | null) {
   const [isConnected, setIsConnected] = useState(false)
+  const [onlineUserIds, setOnlineUserIds] = useState<string[]>([])
   const [incomingMessage, setIncomingMessage] = useState<MessageResponse | null>(null)
   const [incomingConversation, setIncomingConversation] = useState<ConversationResponse | null>(null)
   const [deletedConversationId, setDeletedConversationId] = useState<string | null>(null)
@@ -26,8 +27,14 @@ export function useSignalR(conversationId?: string | null) {
           await connection.start()
           setIsConnected(true)
           console.log('SignalR Connected.')
+          connection.invoke('GetOnlineUsers').then((users: string[]) => {
+            if (Array.isArray(users)) setOnlineUserIds(users)
+          }).catch(() => {})
         } else if (connection.state === 'Connected') {
           setIsConnected(true)
+          connection.invoke('GetOnlineUsers').then((users: string[]) => {
+            if (Array.isArray(users)) setOnlineUserIds(users)
+          }).catch(() => {})
         }
       } catch (err) {
         console.warn('SignalR connection error (server might be offline or reconnecting):', err)
@@ -35,6 +42,24 @@ export function useSignalR(conversationId?: string | null) {
     }
 
     startConnection()
+
+    const handleOnlineUsers = (userIds: string[]) => {
+      console.log('SignalR: Received online users list:', userIds)
+      if (Array.isArray(userIds)) {
+        setOnlineUserIds(userIds)
+      }
+    }
+
+    const handleUserStatusChanged = (userId: string, isOnline: boolean) => {
+      console.log('SignalR: UserStatusChanged:', userId, isOnline)
+      setOnlineUserIds((prev) => {
+        if (isOnline) {
+          return prev.includes(userId) ? prev : [...prev, userId]
+        } else {
+          return prev.filter((id) => id !== userId)
+        }
+      })
+    }
 
     const handleMessage = (message: MessageResponse) => {
       setIncomingMessage(message)
@@ -121,6 +146,8 @@ export function useSignalR(conversationId?: string | null) {
       })
     }
 
+    connection.on('ReceiveOnlineUsers', handleOnlineUsers)
+    connection.on('UserStatusChanged', handleUserStatusChanged)
     connection.on('ReceiveNewMessage', handleMessage)
     connection.on('ReceiveMessage', handleMessage)
     connection.on('ReceiveNewConversation', handleNewConversation)
@@ -135,6 +162,8 @@ export function useSignalR(conversationId?: string | null) {
     connection.on('ReceiveTaskReminder', handleTaskReminder)
 
     return () => {
+      connection.off('ReceiveOnlineUsers', handleOnlineUsers)
+      connection.off('UserStatusChanged', handleUserStatusChanged)
       connection.off('ReceiveNewMessage', handleMessage)
       connection.off('ReceiveMessage', handleMessage)
       connection.off('ReceiveNewConversation', handleNewConversation)
@@ -178,6 +207,7 @@ export function useSignalR(conversationId?: string | null) {
 
   return {
     isConnected,
+    onlineUserIds,
     incomingMessage,
     incomingConversation,
     deletedConversationId,
