@@ -107,6 +107,8 @@ export default function ConversationPage() {
   const [isLoadingOlder, setIsLoadingOlder] = useState<boolean>(false)
   const viewportRef = useRef<HTMLDivElement>(null)
   const [isAtBottom, setIsAtBottom] = useState(true)
+  const isAtBottomRef = useRef(true)
+  const prevMessageCountRef = useRef(0)
   const [newMessageCount, setNewMessageCount] = useState(0)
 
   const visibleMessages = messages.filter((m) => !hiddenMessageIds.includes(m.id))
@@ -132,13 +134,14 @@ export default function ConversationPage() {
 
   // Scroll to the very last message
   function scrollToBottom() {
+    if (viewportRef.current) {
+      viewportRef.current.scrollTop = viewportRef.current.scrollHeight
+    }
     if (visibleMessages.length > 0) {
-      rowVirtualizer.scrollToIndex(visibleMessages.length - 1, { align: 'end', behavior: 'auto' })
-    } else {
-      const el = viewportRef.current
-      if (el) el.scrollTop = el.scrollHeight
+      rowVirtualizer.scrollToIndex(visibleMessages.length - 1, { align: 'end', behavior: 'smooth' })
     }
     setIsAtBottom(true)
+    isAtBottomRef.current = true
     setNewMessageCount(0)
   }
 
@@ -226,6 +229,17 @@ export default function ConversationPage() {
       // 3. Otherwise append new message
       return [...prev, incomingMessage]
     })
+
+    // Clear typing indicator for sender
+    if (incomingMessage.senderName || incomingMessage.senderId) {
+      setTypingUsers((prev) =>
+        prev.filter(
+          (u) =>
+            (!incomingMessage.senderId || u.userId !== incomingMessage.senderId) &&
+            (!incomingMessage.senderName || u.userName !== incomingMessage.senderName)
+        )
+      )
+    }
   }, [incomingMessage, conversationId, currentUser])
 
   // Listen for real-time read receipts from SignalR
@@ -350,31 +364,49 @@ export default function ConversationPage() {
     load()
   }, [conversationId])
 
-  // Auto-scroll to bottom after initial load
+  // Auto-scroll to bottom after initial load & whenever new messages are added
   useEffect(() => {
-    if (!loading && visibleMessages.length > 0) {
-      // Small delay to let virtualizer measure items before scrolling
-      const t = setTimeout(() => {
-        rowVirtualizer.scrollToIndex(visibleMessages.length - 1, { align: 'end', behavior: 'auto' })
-      }, 60)
-      return () => clearTimeout(t)
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading])
+    if (loading || visibleMessages.length === 0) return
 
-  // When new message arrives via SignalR: scroll if at bottom, else show badge
-  useEffect(() => {
-    if (!incomingMessage || incomingMessage.conversationId !== conversationId) return
-    if (isAtBottom) {
-      const t = setTimeout(() => {
-        rowVirtualizer.scrollToIndex(visibleMessages.length - 1, { align: 'end', behavior: 'smooth' })
-      }, 30)
-      return () => clearTimeout(t)
-    } else {
-      setNewMessageCount((c) => c + 1)
+    const isNewAppended = visibleMessages.length > prevMessageCountRef.current
+    prevMessageCountRef.current = visibleMessages.length
+
+    if (isNewAppended) {
+      const lastMessage = visibleMessages[visibleMessages.length - 1]
+      const isOwnMessage =
+        Boolean(currentUser?.userId && lastMessage.senderId === currentUser.userId) ||
+        lastMessage.senderName === "Tôi" ||
+        lastMessage.senderName === currentUser?.fullName
+
+      if (isAtBottomRef.current || isOwnMessage) {
+        const t1 = setTimeout(() => {
+          if (viewportRef.current) {
+            viewportRef.current.scrollTop = viewportRef.current.scrollHeight
+          }
+          if (visibleMessages.length > 0) {
+            rowVirtualizer.scrollToIndex(visibleMessages.length - 1, { align: 'end', behavior: 'smooth' })
+          }
+          setIsAtBottom(true)
+          isAtBottomRef.current = true
+          setNewMessageCount(0)
+        }, 40)
+
+        const t2 = setTimeout(() => {
+          if (viewportRef.current) {
+            viewportRef.current.scrollTop = viewportRef.current.scrollHeight
+          }
+        }, 120)
+
+        return () => {
+          clearTimeout(t1)
+          clearTimeout(t2)
+        }
+      } else {
+        setNewMessageCount((c) => c + 1)
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [incomingMessage])
+  }, [visibleMessages.length, loading, currentUser])
 
   // Load older historical messages on scroll up (Cursor Pagination)
   async function handleLoadOlderMessages() {
@@ -911,7 +943,9 @@ export default function ConversationPage() {
             onScroll={(e) => {
               const target = e.currentTarget
               // Detect scroll to bottom
-              const atBottom = target.scrollHeight - target.scrollTop - target.clientHeight < 60
+              const distanceFromBottom = target.scrollHeight - target.scrollTop - target.clientHeight
+              const atBottom = distanceFromBottom < 120
+              isAtBottomRef.current = atBottom
               setIsAtBottom(atBottom)
               if (atBottom) setNewMessageCount(0)
               // Load older on scroll to top
@@ -1596,17 +1630,25 @@ export default function ConversationPage() {
                 setDraft(val)
                 if (conversationId) {
                   const myName = currentUser?.fullName || "Tôi"
-                  if (!isSelfTypingRef.current && val.trim().length > 0) {
-                    isSelfTypingRef.current = true
-                    sendTyping(true, myName)
-                  }
-                  if (selfTypingTimeoutRef.current) {
-                    clearTimeout(selfTypingTimeoutRef.current)
-                  }
-                  selfTypingTimeoutRef.current = setTimeout(() => {
+                  if (val.trim().length > 0) {
+                    if (!isSelfTypingRef.current) {
+                      isSelfTypingRef.current = true
+                      sendTyping(true, myName)
+                    }
+                    if (selfTypingTimeoutRef.current) {
+                      clearTimeout(selfTypingTimeoutRef.current)
+                    }
+                    selfTypingTimeoutRef.current = setTimeout(() => {
+                      isSelfTypingRef.current = false
+                      sendTyping(false, myName)
+                    }, 3000)
+                  } else if (isSelfTypingRef.current) {
                     isSelfTypingRef.current = false
+                    if (selfTypingTimeoutRef.current) {
+                      clearTimeout(selfTypingTimeoutRef.current)
+                    }
                     sendTyping(false, myName)
-                  }, 2500)
+                  }
                 }
               }}
               onPaste={handlePaste}

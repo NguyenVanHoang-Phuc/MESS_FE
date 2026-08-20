@@ -201,7 +201,7 @@ export default function RegisterPage() {
   return (
     <AuthShell
       eyebrow={step === 'info' ? 'Bắt đầu miễn phí' : 'Bảo mật & Xác thực'}
-      title={step === 'info' ? 'Tạo tài khoản Nexus' : 'Nhập mã xác thực OTP'}
+      title={step === 'info' ? 'Tạo tài khoản MES' : 'Nhập mã xác thực OTP'}
       description={
         step === 'info'
           ? 'Thiết lập tài khoản của bạn để kết nối và làm việc cùng đồng đội.'
@@ -249,7 +249,7 @@ export default function RegisterPage() {
             minLength={6}
           />
           <p className="text-xs leading-5 text-muted-foreground">
-            Bằng việc tiếp tục, bạn đồng ý với điều khoản sử dụng và chính sách bảo mật của Nexus.
+            Bằng việc tiếp tục, bạn đồng ý với điều khoản sử dụng và chính sách bảo mật của MES.
           </p>
           <AuthSubmit loading={loading}>Tiếp tục & Nhận mã OTP</AuthSubmit>
         </form>

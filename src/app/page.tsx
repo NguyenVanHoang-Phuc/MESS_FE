@@ -15,27 +15,13 @@ export default function HomePage() {
         </span>
         <h1 className="text-4xl sm:text-5xl font-extrabold text-gray-900 leading-tight mb-4">
           Chào mừng đến với{" "}
-          <span className="text-blue-600">My App</span>
+          <span className="text-blue-600">MES</span>
         </h1>
         <p className="text-lg text-gray-600 mb-8">
-          Nền tảng quản trị hiện đại, được xây dựng với Next.js App Router, TypeScript
+          Nền tảng nhắn tin hiện đại, được xây dựng với Next.js App Router, TypeScript
           và Tailwind CSS — sẵn sàng để mở rộng.
         </p>
         <div className="flex flex-col sm:flex-row gap-3 justify-center flex-wrap">
-          <Link
-            id="home-cta-dashboard"
-            href="/dashboard"
-            className="px-6 py-3 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition-colors shadow-md"
-          >
-            Đến Dashboard →
-          </Link>
-          <Link
-            id="home-cta-chat"
-            href="/chat"
-            className="px-6 py-3 bg-purple-600 text-white font-semibold rounded-xl hover:bg-purple-700 transition-colors shadow-md"
-          >
-            Mở Nexus Chat ✨
-          </Link>
           <Link
             id="home-cta-login"
             href="/login"
@@ -48,3 +34,4 @@ export default function HomePage() {
     </main>
   );
 }
+

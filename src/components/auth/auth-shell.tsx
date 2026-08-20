@@ -31,25 +31,16 @@ export function AuthShell({
         {/* Logo */}
         <div className="relative z-10 flex items-center gap-3">
           <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-primary-foreground font-bold text-base shadow-lg">
-            N
+            MES
           </span>
-          <span className="text-xl font-semibold text-background">Nexus</span>
+          <span className="text-xl font-semibold text-background">MES</span>
         </div>
 
         {/* Testimonial / tagline */}
         <div className="relative z-10 space-y-6">
           <blockquote className="text-2xl font-semibold leading-snug text-background/90">
-            &ldquo;Nexus giúp chúng tôi quản lý toàn bộ hoạt động chỉ trong một nơi — nhanh hơn, rõ ràng hơn.&rdquo;
+            &ldquo;MES giúp chúng tôi quản lý toàn bộ hoạt động chỉ trong một nơi — nhanh hơn, rõ ràng hơn.&rdquo;
           </blockquote>
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-full bg-primary/30 ring-2 ring-primary/40 flex items-center justify-center text-background text-sm font-semibold">
-              TH
-            </div>
-            <div>
-              <p className="text-sm font-medium text-background">Trần Hương</p>
-              <p className="text-xs text-background/50">COO tại Vinfuture Labs</p>
-            </div>
-          </div>
         </div>
 
         {/* Bottom dots */}

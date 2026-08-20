@@ -168,7 +168,9 @@ export function useSignalR(conversationId?: string | null) {
       if (!conversationId) return
       const connection = signalRService.getConnection()
       if (connection.state === 'Connected') {
-        connection.invoke('SendTyping', conversationId, isTyping, userName).catch(() => {})
+        connection.invoke('SendTyping', conversationId, userName, isTyping).catch((err) => {
+          console.warn('SendTyping error:', err)
+        })
       }
     },
     [conversationId]
