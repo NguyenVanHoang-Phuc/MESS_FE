@@ -127,6 +127,15 @@ export async function getConversations(): Promise<ConversationResponse[]> {
   }
 }
 
+export async function getConversationById(id: string): Promise<ConversationResponse | null> {
+  try {
+    const convs = await getConversations()
+    return convs.find((c) => c.id === id) || null
+  } catch {
+    return null
+  }
+}
+
 export async function createConversation(payload: CreateConversationRequest): Promise<ConversationResponse | null> {
   try {
     const response = await api.post<any>('/conversations', {

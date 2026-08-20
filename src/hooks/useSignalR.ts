@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { signalRService } from '@/lib/signalr'
 import type { ConversationResponse, MessageRecalledEvent, MessageReactionEvent, MessageResponse, MessagesReadEvent, UserTypingEvent } from '@/types/chat'
+import type { TaskResponse } from '@/types/task'
 
 export function useSignalR(conversationId?: string | null) {
   const [isConnected, setIsConnected] = useState(false)
@@ -11,6 +12,10 @@ export function useSignalR(conversationId?: string | null) {
   const [recalledEvent, setRecalledEvent] = useState<MessageRecalledEvent | null>(null)
   const [reactionEvent, setReactionEvent] = useState<MessageReactionEvent | null>(null)
   const [typingEvent, setTypingEvent] = useState<UserTypingEvent | null>(null)
+  const [incomingTask, setIncomingTask] = useState<TaskResponse | null>(null)
+  const [taskUpdatedEvent, setTaskUpdatedEvent] = useState<TaskResponse | null>(null)
+  const [taskDeletedEvent, setTaskDeletedEvent] = useState<{ taskId: string; conversationId?: string } | null>(null)
+  const [taskReminderEvent, setTaskReminderEvent] = useState<any | null>(null)
 
   useEffect(() => {
     const connection = signalRService.getConnection()
@@ -86,6 +91,36 @@ export function useSignalR(conversationId?: string | null) {
       setTypingEvent(normalized)
     }
 
+    const handleNewTask = (task: any) => {
+      console.log('SignalR: Received new task:', task)
+      setIncomingTask(task)
+    }
+
+    const handleTaskUpdated = (task: any) => {
+      console.log('SignalR: Received task updated:', task)
+      setTaskUpdatedEvent(task)
+    }
+
+    const handleTaskDeleted = (eventData: any) => {
+      console.log('SignalR: Received task deleted:', eventData)
+      setTaskDeletedEvent({
+        taskId: eventData.taskId || eventData.TaskId,
+        conversationId: eventData.conversationId || eventData.ConversationId,
+      })
+    }
+
+    const handleTaskReminder = (reminder: any) => {
+      console.log('SignalR: Received task reminder:', reminder)
+      setTaskReminderEvent({
+        taskId: reminder.taskId || reminder.TaskId,
+        taskTitle: reminder.taskTitle || reminder.TaskTitle,
+        conversationId: reminder.conversationId || reminder.ConversationId,
+        type: reminder.type || reminder.Type,
+        deadline: reminder.deadline || reminder.Deadline,
+        message: reminder.message || reminder.Message,
+      })
+    }
+
     connection.on('ReceiveNewMessage', handleMessage)
     connection.on('ReceiveMessage', handleMessage)
     connection.on('ReceiveNewConversation', handleNewConversation)
@@ -94,6 +129,10 @@ export function useSignalR(conversationId?: string | null) {
     connection.on('ReceiveMessageRecalled', handleMessageRecalled)
     connection.on('ReceiveMessageReaction', handleMessageReaction)
     connection.on('ReceiveUserTyping', handleUserTyping)
+    connection.on('ReceiveNewTask', handleNewTask)
+    connection.on('ReceiveTaskUpdated', handleTaskUpdated)
+    connection.on('ReceiveTaskDeleted', handleTaskDeleted)
+    connection.on('ReceiveTaskReminder', handleTaskReminder)
 
     return () => {
       connection.off('ReceiveNewMessage', handleMessage)
@@ -104,6 +143,10 @@ export function useSignalR(conversationId?: string | null) {
       connection.off('ReceiveMessageRecalled', handleMessageRecalled)
       connection.off('ReceiveMessageReaction', handleMessageReaction)
       connection.off('ReceiveUserTyping', handleUserTyping)
+      connection.off('ReceiveNewTask', handleNewTask)
+      connection.off('ReceiveTaskUpdated', handleTaskUpdated)
+      connection.off('ReceiveTaskDeleted', handleTaskDeleted)
+      connection.off('ReceiveTaskReminder', handleTaskReminder)
     }
   }, [conversationId])
 
@@ -121,19 +164,29 @@ export function useSignalR(conversationId?: string | null) {
   }, [isConnected, conversationId])
 
   const sendTyping = useCallback(
-    (isTyping: boolean, userName?: string) => {
+    (isTyping: boolean, userName: string) => {
       if (!conversationId) return
-      try {
-        const connection = signalRService.getConnection()
-        if (connection.state === 'Connected') {
-          connection.invoke('SendTyping', conversationId, userName || 'Người dùng', isTyping).catch(() => {})
-        }
-      } catch (err) {
-        console.warn('Failed to send typing status:', err)
+      const connection = signalRService.getConnection()
+      if (connection.state === 'Connected') {
+        connection.invoke('SendTyping', conversationId, isTyping, userName).catch(() => {})
       }
     },
     [conversationId]
   )
 
-  return { isConnected, incomingMessage, incomingConversation, deletedConversationId, readEvent, recalledEvent, reactionEvent, typingEvent, sendTyping }
+  return {
+    isConnected,
+    incomingMessage,
+    incomingConversation,
+    deletedConversationId,
+    readEvent,
+    recalledEvent,
+    reactionEvent,
+    typingEvent,
+    incomingTask,
+    taskUpdatedEvent,
+    taskDeletedEvent,
+    taskReminderEvent,
+    sendTyping,
+  }
 }
