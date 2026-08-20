@@ -395,8 +395,18 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
         text = text.startsWith("📷") ? text : `📷 ${text}`
       } else if (text === "[Video]" || text.includes("video")) {
         text = text.startsWith("🎥") ? text : `🎥 ${text}`
-      } else if (text.startsWith("[Tệp") || text.includes("tệp")) {
-        text = text.startsWith("📁") ? text : `📁 ${text}`
+      } else if (text.startsWith("[Tệp") || text.includes("tệp") || text.startsWith("📁 [Tệp")) {
+        if (text.startsWith("[Tệp] ")) {
+          const rawFileName = text.substring(6)
+          const cleanFileName = formatCleanFileName(rawFileName)
+          text = `📁 [Tệp] ${cleanFileName}`
+        } else if (text.startsWith("📁 [Tệp] ")) {
+          const rawFileName = text.substring(9)
+          const cleanFileName = formatCleanFileName(rawFileName)
+          text = `📁 [Tệp] ${cleanFileName}`
+        } else {
+          text = text.startsWith("📁") ? text : `📁 ${text}`
+        }
       }
 
       if (isFromMe) {
