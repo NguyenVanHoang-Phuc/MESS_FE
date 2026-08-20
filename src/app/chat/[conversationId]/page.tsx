@@ -667,7 +667,8 @@ export default function ConversationPage() {
     if (selectedFiles.length > 0) {
       try {
         const uploadResult = await uploadFilesApi(selectedFiles.map((item) => item.file))
-        uploadedAttachments = uploadResult.map((u) => ({
+        uploadedAttachments = uploadResult.map((u, idx) => ({
+          fileName: u.fileName || selectedFiles[idx]?.name || formatCleanFileName(u.fileUrl),
           fileUrl: u.fileUrl,
           fileType: u.fileType,
           fileSize: Number(u.fileSize),
@@ -689,8 +690,8 @@ export default function ConversationPage() {
       content: text || undefined,
       isRecalled: false,
       sentAt: new Date().toISOString(),
-      attachments: uploadedAttachments.map((a) => ({
-        fileName: a.fileUrl.split("/").pop() || "attachment",
+      attachments: uploadedAttachments.map((a, idx) => ({
+        fileName: a.fileName || selectedFiles[idx]?.name || formatCleanFileName(a.fileUrl),
         fileUrl: a.fileUrl,
         fileType: a.fileType || "",
         fileSize: a.fileSize,
