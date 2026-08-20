@@ -39,7 +39,7 @@ export default function LoginPage() {
   return (
     <AuthShell
       eyebrow="Chào mừng trở lại"
-      title="Đăng nhập vào Nexus"
+      title="Đăng nhập vào MES"
       description="Tiếp tục quản lý hoạt động và trao đổi tin nhắn trong không gian tập trung."
       alternateText="Chưa có tài khoản?"
       alternateHref="/register"

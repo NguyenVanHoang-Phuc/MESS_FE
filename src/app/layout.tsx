@@ -6,8 +6,8 @@ import '@/styles/globals.css'
 const inter = Inter({ subsets: ['latin', 'vietnamese'], variable: '--font-inter' })
 
 export const metadata: Metadata = {
-  title: 'Nexus — Tổng quan kinh doanh',
-  description: 'Bảng điều khiển quản lý hoạt động kinh doanh của Nexus.',
+  title: 'MES',
+  description: 'Bảng điều khiển quản lý hoạt động của MES.',
 }
 
 export const viewport: Viewport = {

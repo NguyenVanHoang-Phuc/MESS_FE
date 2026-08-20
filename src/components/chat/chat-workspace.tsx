@@ -575,7 +575,7 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
       <aside className="hidden w-[292px] shrink-0 flex-col border-r bg-card lg:flex">
         <div className="flex items-center justify-between border-b px-5 py-4">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Nexus</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">MES</p>
             <h1 className="mt-1 text-xl font-semibold tracking-tight">Tin nhắn</h1>
           </div>
           <button
