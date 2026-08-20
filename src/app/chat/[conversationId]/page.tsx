@@ -1208,119 +1208,136 @@ export default function ConversationPage() {
                                     </button>
                                   </div>
 
-                                  <MessageContent
-                                    className={cn(
-                                      "flex flex-col gap-2 p-3 shadow-sm",
-                                      isOwn
-                                        ? "rounded-2xl rounded-tr-sm bg-primary text-primary-foreground"
-                                        : "rounded-2xl rounded-tl-sm border bg-card text-card-foreground"
-                                    )}
-                                  >
-                                    {/* Text content if present */}
-                                    {message.content && (
-                                      <p className="leading-relaxed whitespace-pre-wrap text-sm">{message.content}</p>
-                                    )}
-
-                                    {/* Images Gallery */}
-                                    {imageAttachments.length > 0 && (
-                                      <div
+                                  {(() => {
+                                    const isOnlyMedia = (!message.content || message.content.trim() === '') && docAttachments.length === 0 && (imageAttachments.length > 0 || videoAttachments.length > 0)
+                                    return (
+                                      <MessageContent
                                         className={cn(
-                                          "grid gap-2 overflow-hidden rounded-xl",
-                                          imageAttachments.length === 1
-                                            ? "grid-cols-1"
-                                            : imageAttachments.length === 2
-                                            ? "grid-cols-2"
-                                            : "grid-cols-2 sm:grid-cols-3"
+                                          "flex flex-col gap-2 transition",
+                                          isOnlyMedia
+                                            ? "p-0 bg-transparent border-0 shadow-none"
+                                            : isOwn
+                                              ? "p-3 shadow-sm rounded-2xl rounded-tr-sm bg-primary text-primary-foreground"
+                                              : "p-3 shadow-sm rounded-2xl rounded-tl-sm border bg-card text-card-foreground"
                                         )}
                                       >
-                                        {imageAttachments.map((img, idx) => {
-                                          const fullUrl = getFileFullUrl(img.fileUrl)
-                                          return (
-                                            <div
-                                              key={img.id || idx}
-                                              onClick={() => setActiveLightboxImage(fullUrl)}
-                                              className="group relative cursor-pointer overflow-hidden rounded-lg bg-black/5"
-                                            >
-                                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                                              <img
-                                                src={fullUrl}
-                                                alt={img.fileName || "Ảnh đính kèm"}
-                                                className="h-44 w-full object-cover transition duration-300 group-hover:scale-105"
-                                              />
-                                              <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 transition group-hover:opacity-100">
-                                                <ZoomIn className="size-6 text-white" />
-                                              </div>
-                                            </div>
-                                          )
-                                        })}
-                                      </div>
-                                    )}
+                                        {/* Text content if present */}
+                                        {message.content && (
+                                          <p className="leading-relaxed whitespace-pre-wrap text-sm">{message.content}</p>
+                                        )}
 
-                                    {/* Videos Player */}
-                                    {videoAttachments.length > 0 && (
-                                      <div className="space-y-2">
-                                        {videoAttachments.map((vid, idx) => (
-                                          <div key={vid.id || idx} className="overflow-hidden rounded-xl bg-black">
-                                            <video
-                                              controls
-                                              src={getFileFullUrl(vid.fileUrl)}
-                                              className="max-h-64 w-full rounded-xl"
-                                            />
-                                          </div>
-                                        ))}
-                                      </div>
-                                    )}
-
-                                    {/* Document & Files Attachments */}
-                                    {docAttachments.length > 0 && (
-                                      <div className="space-y-1.5 w-full">
-                                        {docAttachments.map((doc, idx) => {
-                                          const fullUrl = getFileFullUrl(doc.fileUrl)
-                                          return (
-                                            <div
-                                              key={doc.id || idx}
-                                              className={cn(
-                                                "flex items-center justify-between gap-3 rounded-xl p-2.5 transition",
-                                                isOwn
-                                                  ? "bg-primary-foreground/10 text-primary-foreground hover:bg-primary-foreground/20"
-                                                  : "bg-muted/70 text-foreground hover:bg-muted"
-                                              )}
-                                            >
-                                              <div className="flex items-center gap-2.5 min-w-0">
-                                                <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-background/80 shadow-xs">
-                                                  {renderDocumentIcon(doc.fileName)}
-                                                </div>
-                                                <div className="min-w-0">
-                                                  <p className="truncate text-xs font-medium">{doc.fileName}</p>
-                                                  {doc.fileSize && (
-                                                    <p className={cn("text-[10px]", isOwn ? "text-primary-foreground/70" : "text-muted-foreground")}>
-                                                      {formatFileSize(doc.fileSize)}
-                                                    </p>
+                                        {/* Images Gallery */}
+                                        {imageAttachments.length > 0 && (
+                                          <div
+                                            className={cn(
+                                              "overflow-hidden rounded-2xl",
+                                              imageAttachments.length === 1
+                                                ? "w-fit"
+                                                : imageAttachments.length === 2
+                                                ? "grid grid-cols-2 gap-1.5"
+                                                : "grid grid-cols-2 sm:grid-cols-3 gap-1.5"
+                                            )}
+                                          >
+                                            {imageAttachments.map((img, idx) => {
+                                              const fullUrl = getFileFullUrl(img.fileUrl)
+                                              return (
+                                                <div
+                                                  key={img.id || idx}
+                                                  onClick={() => setActiveLightboxImage(fullUrl)}
+                                                  className={cn(
+                                                    "group relative cursor-pointer overflow-hidden rounded-2xl transition duration-200",
+                                                    imageAttachments.length === 1
+                                                      ? "bg-transparent shadow-xs hover:shadow-md"
+                                                      : "bg-black/5 aspect-square"
                                                   )}
+                                                >
+                                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                                  <img
+                                                    src={fullUrl}
+                                                    alt={img.fileName || "Ảnh đính kèm"}
+                                                    className={cn(
+                                                      "rounded-2xl transition duration-300 group-hover:scale-[1.02]",
+                                                      imageAttachments.length === 1
+                                                        ? "max-h-80 max-w-xs sm:max-w-sm md:max-w-md w-auto h-auto object-contain"
+                                                        : "size-full object-cover"
+                                                    )}
+                                                  />
+                                                  <div className="absolute inset-0 flex items-center justify-center bg-black/25 opacity-0 transition group-hover:opacity-100 rounded-2xl">
+                                                    <ZoomIn className="size-6 text-white" />
+                                                  </div>
                                                 </div>
-                                              </div>
+                                              )
+                                            })}
+                                          </div>
+                                        )}
 
-                                              <a
-                                                href={fullUrl}
-                                                download={doc.fileName}
-                                                target="_blank"
-                                                rel="noreferrer"
-                                                title={`Tải xuống ${doc.fileName}`}
-                                                className={cn(
-                                                  "flex size-8 shrink-0 items-center justify-center rounded-lg transition",
-                                                  isOwn
-                                                    ? "hover:bg-primary-foreground/20 text-primary-foreground"
-                                                    : "hover:bg-accent text-primary"
-                                                )}
-                                              >
-                                                <Download className="size-4" />
-                                              </a>
-                                            </div>
-                                          )
-                                        })}
-                                      </div>
-                                    )}
-                                  </MessageContent>
+                                        {/* Videos Player */}
+                                        {videoAttachments.length > 0 && (
+                                          <div className="space-y-2">
+                                            {videoAttachments.map((vid, idx) => (
+                                              <div key={vid.id || idx} className="overflow-hidden rounded-2xl bg-black max-w-xs sm:max-w-md">
+                                                <video
+                                                  controls
+                                                  src={getFileFullUrl(vid.fileUrl)}
+                                                  className="max-h-64 w-full rounded-2xl"
+                                                />
+                                              </div>
+                                            ))}
+                                          </div>
+                                        )}
+
+                                        {/* Document & Files Attachments */}
+                                        {docAttachments.length > 0 && (
+                                          <div className="space-y-1.5 w-full">
+                                            {docAttachments.map((doc, idx) => {
+                                              const fullUrl = getFileFullUrl(doc.fileUrl)
+                                              return (
+                                                <div
+                                                  key={doc.id || idx}
+                                                  className={cn(
+                                                    "flex items-center justify-between gap-3 rounded-xl p-2.5 transition",
+                                                    isOwn
+                                                      ? "bg-primary-foreground/10 text-primary-foreground hover:bg-primary-foreground/20"
+                                                      : "bg-muted/70 text-foreground hover:bg-muted"
+                                                  )}
+                                                >
+                                                  <div className="flex items-center gap-2.5 min-w-0">
+                                                    <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-background/80 shadow-xs">
+                                                      {renderDocumentIcon(doc.fileName)}
+                                                    </div>
+                                                    <div className="min-w-0">
+                                                      <p className="truncate text-xs font-medium">{doc.fileName}</p>
+                                                      {doc.fileSize && (
+                                                        <p className={cn("text-[10px]", isOwn ? "text-primary-foreground/70" : "text-muted-foreground")}>
+                                                          {formatFileSize(doc.fileSize)}
+                                                        </p>
+                                                      )}
+                                                    </div>
+                                                  </div>
+
+                                                  <a
+                                                    href={fullUrl}
+                                                    download={doc.fileName}
+                                                    target="_blank"
+                                                    rel="noreferrer"
+                                                    title={`Tải xuống ${doc.fileName}`}
+                                                    className={cn(
+                                                      "flex size-8 shrink-0 items-center justify-center rounded-lg transition",
+                                                      isOwn
+                                                        ? "hover:bg-primary-foreground/20 text-primary-foreground"
+                                                        : "hover:bg-accent text-primary"
+                                                    )}
+                                                  >
+                                                    <Download className="size-4" />
+                                                  </a>
+                                                </div>
+                                              )
+                                            })}
+                                          </div>
+                                        )}
+                                      </MessageContent>
+                                    )
+                                  })()}
                                 </div>
                               )}
 
