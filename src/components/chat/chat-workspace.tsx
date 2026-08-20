@@ -36,7 +36,7 @@ import { cn } from "@/utils/cn"
 import { deleteConversationApi, getConversations, getMessages, removeParticipantApi, searchUsersApi } from "@/services/api/chat"
 import { getCurrentUser, logoutUser } from "@/services/api/auth"
 import { useSignalR } from "@/hooks/useSignalR"
-import { formatFileSize, formatMessageTime } from "@/utils/formatters"
+import { formatCleanFileName, formatFileSize, formatMessageTime } from "@/utils/formatters"
 import { playNotificationSound } from "@/utils/sound"
 import { CreateGroupModal } from "@/components/chat/create-group-modal"
 import { AddMembersModal } from "@/components/chat/add-members-modal"
@@ -1096,6 +1096,7 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
                       const fullUrl = att.fileUrl.startsWith('http') || att.fileUrl.startsWith('blob')
                         ? att.fileUrl
                         : `${process.env.NEXT_PUBLIC_API_URL?.replace('/api', '') || 'http://localhost:5011'}${att.fileUrl.startsWith('/') ? '' : '/'}${att.fileUrl}`
+                      const cleanName = formatCleanFileName(att.fileName || att.fileUrl)
                       return (
                         <div
                           key={att.id || idx}
@@ -1106,7 +1107,7 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
                               <FileText className="size-4" />
                             </div>
                             <div className="min-w-0">
-                              <p className="truncate text-xs font-medium">{att.fileName}</p>
+                              <p className="truncate text-xs font-medium" title={cleanName}>{cleanName}</p>
                               {att.fileSize && (
                                 <p className="text-[10px] text-muted-foreground">{formatFileSize(att.fileSize)}</p>
                               )}
@@ -1114,10 +1115,10 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
                           </div>
                           <a
                             href={fullUrl}
-                            download={att.fileName}
+                            download={cleanName}
                             target="_blank"
                             rel="noreferrer"
-                            title={`Tải xuống ${att.fileName}`}
+                            title={`Tải xuống ${cleanName}`}
                             className="p-1.5 text-muted-foreground hover:text-primary transition rounded"
                           >
                             <Download className="size-3.5" />
@@ -1302,14 +1303,15 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
                     const fullUrl = att.fileUrl.startsWith('http') || att.fileUrl.startsWith('blob')
                       ? att.fileUrl
                       : `${process.env.NEXT_PUBLIC_API_URL?.replace('/api', '') || 'http://localhost:5011'}${att.fileUrl.startsWith('/') ? '' : '/'}${att.fileUrl}`
+                    const cleanName = formatCleanFileName(att.fileName || att.fileUrl)
                     return (
                       <div
                         key={att.id || idx}
-                        className="flex items-center justify-between gap-3 rounded-xl border p-3.5 bg-muted/20 hover:bg-muted/50 transition group"
+                        className="group flex items-center justify-between gap-4 p-3 rounded-xl border bg-muted/20 hover:bg-muted/50 hover:border-primary/20 transition duration-150"
                       >
                         <div className="flex items-center gap-3.5 min-w-0 flex-1">
                           <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-card border shadow-2xs">
-                            {getDocIcon(att.fileName)}
+                            {getDocIcon(cleanName)}
                           </div>
                           <div className="min-w-0 flex-1">
                             <a
@@ -1317,9 +1319,9 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
                               target="_blank"
                               rel="noreferrer"
                               className="font-medium text-xs text-foreground hover:text-primary transition truncate block"
-                              title={att.fileName}
+                              title={cleanName}
                             >
-                              {att.fileName}
+                              {cleanName}
                             </a>
                             <div className="flex items-center gap-2 mt-0.5 text-[11px] text-muted-foreground">
                               {att.fileSize ? <span>{formatFileSize(att.fileSize)}</span> : null}
@@ -1341,7 +1343,7 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
                           </a>
                           <a
                             href={fullUrl}
-                            download={att.fileName}
+                            download={cleanName}
                             target="_blank"
                             rel="noreferrer"
                             className="flex items-center gap-1 rounded-lg bg-primary/10 px-2.5 py-1.5 text-xs font-medium text-primary hover:bg-primary/20 transition"
