@@ -77,6 +77,7 @@ export interface AttachmentResponse {
 }
 
 export interface AttachmentInput {
+  fileName?: string
   fileUrl: string
   fileType?: string
   fileSize?: number
