@@ -38,7 +38,7 @@ import { useSignalR } from "@/hooks/useSignalR"
 import { getConversationById, getMessages, markConversationAsReadApi, reactMessageApi, recallMessageApi, sendMessageApi, uploadFilesApi } from "@/services/api/chat"
 import { getTasksApi } from "@/services/api/tasks"
 import { getCurrentUser } from "@/services/api/auth"
-import { formatFileSize, formatMessageTime } from "@/utils/formatters"
+import { formatCleanFileName, formatFileSize, formatMessageTime } from "@/utils/formatters"
 import { cn } from "@/utils/cn"
 import type { AttachmentInput, AttachmentResponse, ConversationResponse, MessageResponse, ReactionResponse } from "@/types/chat"
 import type { TaskResponse } from "@/types/task"
@@ -737,7 +737,8 @@ export default function ConversationPage() {
   }
 
   function renderDocumentIcon(fileName: string) {
-    const ext = fileName.split(".").pop()?.toLowerCase() || ""
+    const clean = formatCleanFileName(fileName)
+    const ext = clean.split(".").pop()?.toLowerCase() || ""
     if (["pdf"].includes(ext)) return <FileText className="size-5 text-red-500" />
     if (["xls", "xlsx", "csv"].includes(ext)) return <FileSpreadsheet className="size-5 text-emerald-500" />
     if (["doc", "docx", "txt"].includes(ext)) return <FileText className="size-5 text-blue-500" />
@@ -1291,6 +1292,7 @@ export default function ConversationPage() {
                                           <div className="space-y-1.5 w-full">
                                             {docAttachments.map((doc, idx) => {
                                               const fullUrl = getFileFullUrl(doc.fileUrl)
+                                              const cleanName = formatCleanFileName(doc.fileName || doc.fileUrl)
                                               return (
                                                 <div
                                                   key={doc.id || idx}
@@ -1303,10 +1305,10 @@ export default function ConversationPage() {
                                                 >
                                                   <div className="flex items-center gap-2.5 min-w-0">
                                                     <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-background/80 shadow-xs">
-                                                      {renderDocumentIcon(doc.fileName)}
+                                                      {renderDocumentIcon(cleanName)}
                                                     </div>
                                                     <div className="min-w-0">
-                                                      <p className="truncate text-xs font-medium">{doc.fileName}</p>
+                                                      <p className="truncate text-xs font-medium" title={cleanName}>{cleanName}</p>
                                                       {doc.fileSize && (
                                                         <p className={cn("text-[10px]", isOwn ? "text-primary-foreground/70" : "text-muted-foreground")}>
                                                           {formatFileSize(doc.fileSize)}
@@ -1317,10 +1319,10 @@ export default function ConversationPage() {
 
                                                   <a
                                                     href={fullUrl}
-                                                    download={doc.fileName}
+                                                    download={cleanName}
                                                     target="_blank"
                                                     rel="noreferrer"
-                                                    title={`Tải xuống ${doc.fileName}`}
+                                                    title={`Tải xuống ${cleanName}`}
                                                     className={cn(
                                                       "flex size-8 shrink-0 items-center justify-center rounded-lg transition",
                                                       isOwn

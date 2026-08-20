@@ -111,3 +111,35 @@ export function formatFileSize(bytes?: number | null): string {
   const size = (bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1);
   return `${size} ${units[i]}`;
 }
+
+/**
+ * Cleans up and formats document/file names by stripping query params, GUID prefixes, and path artifacts.
+ * @example formatCleanFileName("a74c5ede5e324153a5644afbccdcf6cb_bookings-report-2026-08-14.pdf?sv=2025...") → "bookings-report-2026-08-14.pdf"
+ */
+export function formatCleanFileName(fileNameOrUrl?: string | null): string {
+  if (!fileNameOrUrl) return "Tệp đính kèm";
+  try {
+    // 1. Strip query string and hash
+    let clean = fileNameOrUrl.split("?")[0].split("#")[0];
+    
+    // 2. Extract basename if it's a full URL or path
+    clean = clean.split("/").pop() || clean;
+    
+    // 3. Decode URI components in case of URL encoded names
+    try {
+      clean = decodeURIComponent(clean);
+    } catch {
+      // ignore
+    }
+
+    // 4. Strip 32-character hex GUID or UUID with underscore prefix
+    // e.g. "a74c5ede5e324153a5644afbccdcf6cb_filename.pdf" or "12345678-1234-1234-1234-123456789abc_filename.pdf"
+    clean = clean.replace(/^[a-f0-9]{32}_/i, "");
+    clean = clean.replace(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}_/i, "");
+
+    return clean || "Tệp đính kèm";
+  } catch {
+    return fileNameOrUrl || "Tệp đính kèm";
+  }
+}
+
