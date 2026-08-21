@@ -109,6 +109,8 @@ export default function ConversationPage() {
   const [isAtBottom, setIsAtBottom] = useState(true)
   const isAtBottomRef = useRef(true)
   const prevMessageCountRef = useRef(0)
+  const lastMessageIdRef = useRef<string | null>(null)
+  const isPrependingOlderRef = useRef(false)
   const [newMessageCount, setNewMessageCount] = useState(0)
 
   const visibleMessages = messages.filter((m) => !hiddenMessageIds.includes(m.id))
@@ -342,6 +344,8 @@ export default function ConversationPage() {
       setLoading(true)
       setNewMessageCount(0)
       setIsAtBottom(true)
+      isAtBottomRef.current = true
+      isPrependingOlderRef.current = false
 
       try {
         const [msgRes, convRes, taskList] = await Promise.all([
@@ -351,10 +355,22 @@ export default function ConversationPage() {
         ])
 
         setMessages(msgRes.items)
+        lastMessageIdRef.current = msgRes.items[msgRes.items.length - 1]?.id || null
+        prevMessageCountRef.current = msgRes.items.length
         setNextCursor(msgRes.nextCursor || null)
         setHasMore(msgRes.hasMore)
         if (convRes) setConversationDetails(convRes)
         setTasks(taskList)
+
+        // Initial scroll to bottom
+        setTimeout(() => {
+          if (viewportRef.current) {
+            viewportRef.current.scrollTop = viewportRef.current.scrollHeight
+          }
+          if (msgRes.items.length > 0) {
+            rowVirtualizer.scrollToIndex(msgRes.items.length - 1, { align: 'end', behavior: 'auto' })
+          }
+        }, 50)
       } catch (err) {
         console.warn("Failed to load conversation details / tasks:", err)
       } finally {
@@ -364,15 +380,24 @@ export default function ConversationPage() {
     load()
   }, [conversationId])
 
-  // Auto-scroll to bottom after initial load & whenever new messages are added
+  // Auto-scroll to bottom ONLY when a NEW message is appended to the bottom
   useEffect(() => {
     if (loading || visibleMessages.length === 0) return
 
-    const isNewAppended = visibleMessages.length > prevMessageCountRef.current
-    prevMessageCountRef.current = visibleMessages.length
+    // If we are currently prepending older historical messages, NEVER scroll to bottom!
+    if (isPrependingOlderRef.current) {
+      prevMessageCountRef.current = visibleMessages.length
+      return
+    }
 
-    if (isNewAppended) {
-      const lastMessage = visibleMessages[visibleMessages.length - 1]
+    const lastMessage = visibleMessages[visibleMessages.length - 1]
+    const isLastMessageNew = Boolean(lastMessage && lastMessage.id !== lastMessageIdRef.current)
+
+    // Only trigger bottom scroll if a NEW message was actually appended to the bottom
+    if (isLastMessageNew) {
+      lastMessageIdRef.current = lastMessage.id
+      prevMessageCountRef.current = visibleMessages.length
+
       const isOwnMessage =
         Boolean(currentUser?.userId && lastMessage.senderId === currentUser.userId) ||
         lastMessage.senderName === "Tôi" ||
@@ -389,13 +414,13 @@ export default function ConversationPage() {
           setIsAtBottom(true)
           isAtBottomRef.current = true
           setNewMessageCount(0)
-        }, 40)
+        }, 30)
 
         const t2 = setTimeout(() => {
           if (viewportRef.current) {
             viewportRef.current.scrollTop = viewportRef.current.scrollHeight
           }
-        }, 120)
+        }, 100)
 
         return () => {
           clearTimeout(t1)
@@ -408,19 +433,20 @@ export default function ConversationPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleMessages.length, loading, currentUser])
 
-  // Load older historical messages on scroll up (Cursor Pagination)
+  // Load older historical messages on scroll up (Cursor Pagination with Perfect Anchoring)
   async function handleLoadOlderMessages() {
     if (!conversationId || !hasMore || isLoadingOlder || !nextCursor) return
     setIsLoadingOlder(true)
+    isPrependingOlderRef.current = true
 
-    // Snapshot: which item index was at the top of the visible area right now
+    // Snapshot current scroll state and anchor index
     const anchorIndex = rowVirtualizer.range?.startIndex ?? 0
+    const prevScrollHeight = viewportRef.current?.scrollHeight || 0
+    const prevScrollTop = viewportRef.current?.scrollTop || 0
 
     try {
       const res = await getMessages(conversationId, nextCursor, 30)
       if (res.items.length > 0) {
-        // Calculate deduplicated new items BEFORE updating state
-        // so we know exactly how many items will be prepended
         let newItemCount = 0
         setMessages((prev) => {
           const existingIds = new Set(prev.map((m) => m.id))
@@ -431,19 +457,30 @@ export default function ConversationPage() {
         setNextCursor(res.nextCursor || null)
         setHasMore(res.hasMore)
 
-        // After React flushes the new items, restore scroll so the previously-visible
-        // item is still at the same position (pin anchor = anchorIndex + newItemCount)
+        // Seamlessly maintain scroll position without any jumping
         requestAnimationFrame(() => {
+          if (viewportRef.current) {
+            const newScrollHeight = viewportRef.current.scrollHeight
+            const heightDiff = newScrollHeight - prevScrollHeight
+            if (heightDiff > 0) {
+              viewportRef.current.scrollTop = prevScrollTop + heightDiff
+            }
+          }
           rowVirtualizer.scrollToIndex(anchorIndex + newItemCount, {
             align: 'start',
             behavior: 'auto',
           })
+          setTimeout(() => {
+            isPrependingOlderRef.current = false
+          }, 200)
         })
       } else {
         setHasMore(false)
+        isPrependingOlderRef.current = false
       }
     } catch (err) {
       console.error("Failed to load older messages", err)
+      isPrependingOlderRef.current = false
     } finally {
       setIsLoadingOlder(false)
     }
