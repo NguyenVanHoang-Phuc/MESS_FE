@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
 import {
   AlertTriangle,
+  ArrowLeft,
   Bell,
   BellOff,
   ChevronLeft,
@@ -53,7 +54,8 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
 
   const [conversations, setConversations] = useState<ConversationResponse[]>([])
   const [activeTab, setActiveTab] = useState("Hội thoại")
-  const [showDetails, setShowDetails] = useState(true)
+  const [showDetails, setShowDetails] = useState(false)
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [currentUser, setCurrentUser] = useState<any>(null)
   const [isCreateGroupOpen, setIsCreateGroupOpen] = useState(false)
@@ -72,7 +74,14 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
   const [showDocumentsModal, setShowDocumentsModal] = useState(false)
   const [docSearchQuery, setDocSearchQuery] = useState("")
 
-  const { incomingMessage, incomingConversation, deletedConversationId, typingEvent } = useSignalR(conversationId)
+  // On desktop xl: screens (>= 1280px), show details panel by default
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.innerWidth >= 1280) {
+      setShowDetails(true)
+    }
+  }, [])
+
+  const { incomingMessage, incomingConversation, deletedConversationId, typingEvent, onlineUserIds } = useSignalR(conversationId)
   const lastHandledMessageIdRef = useRef<string | null>(null)
   const [headerTypingUser, setHeaderTypingUser] = useState<string | null>(null)
   const headerTypingTimerRef = useRef<NodeJS.Timeout | null>(null)
@@ -117,11 +126,11 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
     try {
       const saved = localStorage.getItem('muted_conversations')
       if (saved) setMutedConversations(JSON.parse(saved))
-    } catch {}
+    } catch { }
 
     if (typeof window !== 'undefined' && 'Notification' in window) {
       if (Notification.permission === 'default') {
-        Notification.requestPermission().catch(() => {})
+        Notification.requestPermission().catch(() => { })
       }
     }
   }, [])
@@ -132,7 +141,7 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
       const next = isMuted ? prev.filter((id) => id !== convId) : [...prev, convId]
       try {
         localStorage.setItem('muted_conversations', JSON.stringify(next))
-      } catch {}
+      } catch { }
       return next
     })
   }
@@ -179,12 +188,12 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
         incomingMessage.content && incomingMessage.content.trim()
           ? incomingMessage.content
           : (incomingMessage.attachments && incomingMessage.attachments.length > 0
-              ? (incomingMessage.attachments.some((a) => (a.fileType || '').startsWith('image/') || /\.(jpg|jpeg|png|webp|gif)$/i.test(a.fileUrl))
-                  ? (incomingMessage.attachments.length > 1 ? `[Đã gửi ${incomingMessage.attachments.length} hình ảnh]` : "[Hình ảnh]")
-                  : incomingMessage.attachments.some((a) => (a.fileType || '').startsWith('video/') || /\.(mp4|mov)$/i.test(a.fileUrl))
-                    ? "[Video]"
-                    : (incomingMessage.attachments.length > 1 ? `[Đã gửi ${incomingMessage.attachments.length} tệp đính kèm]` : `[Tệp] ${incomingMessage.attachments[0].fileName || 'Đính kèm'}`))
-              : "[Đã gửi một hình ảnh/tệp]")
+            ? (incomingMessage.attachments.some((a) => (a.fileType || '').startsWith('image/') || /\.(jpg|jpeg|png|webp|gif)$/i.test(a.fileUrl))
+              ? (incomingMessage.attachments.length > 1 ? `[Đã gửi ${incomingMessage.attachments.length} hình ảnh]` : "[Hình ảnh]")
+              : incomingMessage.attachments.some((a) => (a.fileType || '').startsWith('video/') || /\.(mp4|mov)$/i.test(a.fileUrl))
+                ? "[Video]"
+                : (incomingMessage.attachments.length > 1 ? `[Đã gửi ${incomingMessage.attachments.length} tệp đính kèm]` : `[Tệp] ${incomingMessage.attachments[0].fileName || 'Đính kèm'}`))
+            : "[Đã gửi một hình ảnh/tệp]")
 
       const updatedItem: ConversationResponse = {
         ...target,
@@ -219,10 +228,10 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
       incomingMessage.content && incomingMessage.content.trim()
         ? incomingMessage.content
         : (incomingMessage.attachments && incomingMessage.attachments.length > 0
-            ? (incomingMessage.attachments.some((a) => (a.fileType || '').startsWith('image/') || /\.(jpg|jpeg|png|webp|gif)$/i.test(a.fileUrl))
-                ? (incomingMessage.attachments.length > 1 ? `[Đã gửi ${incomingMessage.attachments.length} hình ảnh]` : "[Hình ảnh]")
-                : "[Tệp đính kèm]")
-            : "[Đã gửi một hình ảnh/tệp]")
+          ? (incomingMessage.attachments.some((a) => (a.fileType || '').startsWith('image/') || /\.(jpg|jpeg|png|webp|gif)$/i.test(a.fileUrl))
+            ? (incomingMessage.attachments.length > 1 ? `[Đã gửi ${incomingMessage.attachments.length} hình ảnh]` : "[Hình ảnh]")
+            : "[Tệp đính kèm]")
+          : "[Đã gửi một hình ảnh/tệp]")
 
     setToastNotification({
       id: incomingMessage.id,
@@ -245,7 +254,7 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
             window.focus()
             router.push(`/chat/${incomingMessage.conversationId}`)
           }
-        } catch {}
+        } catch { }
       }
     }
   }, [incomingMessage, conversationId, currentUser, mutedConversations, router])
@@ -345,7 +354,12 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
 
   async function loadConversations() {
     const user = getCurrentUser()
-    if (user) setCurrentUser(user)
+    if (user) {
+      setCurrentUser(user)
+    } else {
+      router.push('/login')
+      return
+    }
     const data = await getConversations()
     setConversations(data)
     setLoading(false)
@@ -571,21 +585,46 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
         </div>
       )}
 
+      {/* Mobile Sidebar Backdrop */}
+      {isMobileSidebarOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/50 backdrop-blur-xs lg:hidden animate-in fade-in duration-200"
+          onClick={() => setIsMobileSidebarOpen(false)}
+        />
+      )}
+
       {/* Left Sidebar */}
-      <aside className="hidden w-[292px] shrink-0 flex-col border-r bg-card lg:flex">
+      <aside
+        className={cn(
+          "w-[300px] max-w-[85vw] shrink-0 flex-col border-r bg-card transition-all duration-300 z-50",
+          "lg:relative lg:flex lg:translate-x-0 lg:w-[292px]",
+          isMobileSidebarOpen
+            ? "fixed inset-y-0 left-0 flex translate-x-0 shadow-2xl animate-in slide-in-from-left duration-200"
+            : "hidden lg:flex"
+        )}
+      >
         <div className="flex items-center justify-between border-b px-5 py-4">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">MES</p>
             <h1 className="mt-1 text-xl font-semibold tracking-tight">Tin nhắn</h1>
           </div>
-          <button
-            onClick={() => setIsCreateGroupOpen(true)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition shadow-sm"
-            title="Tạo nhóm mới"
-          >
-            <Plus className="size-3.5" />
-            <span>Tạo nhóm</span>
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setIsCreateGroupOpen(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition shadow-sm"
+              title="Tạo nhóm mới"
+            >
+              <Plus className="size-3.5" />
+              <span>Tạo nhóm</span>
+            </button>
+            <button
+              onClick={() => setIsMobileSidebarOpen(false)}
+              className="lg:hidden p-1.5 rounded-lg text-muted-foreground hover:bg-muted"
+              aria-label="Đóng menu"
+            >
+              <X className="size-4" />
+            </button>
+          </div>
         </div>
 
         <div className="flex gap-1 border-b px-3 pt-3">
@@ -649,7 +688,10 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
                 return (
                   <button
                     key={person.id}
-                    onClick={() => handleSelectPerson(person)}
+                    onClick={() => {
+                      setIsMobileSidebarOpen(false)
+                      handleSelectPerson(person)
+                    }}
                     className={cn(
                       "flex items-center gap-3 rounded-xl px-3 py-2.5 text-left transition",
                       isSelectedDraft ? "bg-accent font-medium text-accent-foreground" : "hover:bg-muted/70 text-foreground"
@@ -699,6 +741,7 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
                       key={item.id}
                       onClick={() => {
                         setDraftRecipient(null)
+                        setIsMobileSidebarOpen(false)
                         router.push(`/chat/${item.id}`)
                       }}
                       className={cn(
@@ -766,9 +809,14 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
 
       {/* Main Chat Area */}
       <main className="flex min-w-0 flex-1 flex-col bg-background relative">
-        <header className="flex h-[73px] shrink-0 items-center justify-between border-b bg-card px-4 sm:px-6 z-10">
-          <div className="flex min-w-0 items-center gap-3">
-            <button className="rounded-lg p-2 text-muted-foreground hover:bg-accent lg:hidden" aria-label="Mở danh sách">
+        <header className="flex h-[73px] shrink-0 items-center justify-between border-b bg-card px-3 sm:px-6 z-10">
+          <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+            <button
+              onClick={() => setIsMobileSidebarOpen(true)}
+              className="rounded-lg p-2 text-muted-foreground hover:bg-accent hover:text-foreground lg:hidden transition -ml-1"
+              aria-label="Mở danh sách hội thoại"
+              title="Danh sách hội thoại"
+            >
               <Menu className="size-5" />
             </button>
             {/* Show draft recipient info when in draft mode */}
@@ -886,9 +934,25 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
         </div>
       </main>
 
-      {/* Right Details Sidebar */}
+      {/* Right Details Drawer Backdrop for screens < xl */}
       {showDetails && selectedInfo && (
-        <aside className="hidden w-[310px] shrink-0 border-l bg-card xl:flex xl:flex-col overflow-y-auto">
+        <div
+          className="fixed inset-0 z-40 bg-black/50 backdrop-blur-xs xl:hidden animate-in fade-in duration-200"
+          onClick={() => setShowDetails(false)}
+        />
+      )}
+
+      {/* Right Details Sidebar */}
+      {selectedInfo && (
+        <aside
+          className={cn(
+            "w-[310px] max-w-[85vw] shrink-0 border-l bg-card flex flex-col overflow-y-auto transition-all duration-300 z-50",
+            "xl:relative xl:flex xl:translate-x-0",
+            showDetails
+              ? "fixed inset-y-0 right-0 flex translate-x-0 shadow-2xl animate-in slide-in-from-right duration-200"
+              : "hidden xl:flex"
+          )}
+        >
           <div className="flex h-[73px] items-center justify-between border-b px-5">
             <h3 className="font-semibold text-sm">Chi tiết cuộc trò chuyện</h3>
             <button
@@ -1217,9 +1281,8 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
                 <button
                   key={idx}
                   onClick={() => setGalleryIndex(idx)}
-                  className={`shrink-0 size-14 overflow-hidden rounded-lg border-2 transition ${
-                    idx === galleryIndex ? 'border-primary scale-105' : 'border-transparent opacity-60 hover:opacity-100'
-                  }`}
+                  className={`shrink-0 size-14 overflow-hidden rounded-lg border-2 transition ${idx === galleryIndex ? 'border-primary scale-105' : 'border-transparent opacity-60 hover:opacity-100'
+                    }`}
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={url} alt={`Ảnh ${idx + 1}`} className="size-full object-cover" />

@@ -154,11 +154,11 @@ export function useSignalR(conversationId?: string | null) {
   useEffect(() => {
     const connection = signalRService.getConnection()
     if (isConnected && conversationId && connection.state === 'Connected') {
-      connection.invoke('JoinConversation', conversationId).catch(() => {})
+      connection.invoke('JoinConversation', conversationId).catch(() => { })
     }
     return () => {
       if (conversationId && connection.state === 'Connected') {
-        connection.invoke('LeaveConversation', conversationId).catch(() => {})
+        connection.invoke('LeaveConversation', conversationId).catch(() => { })
       }
     }
   }, [isConnected, conversationId])

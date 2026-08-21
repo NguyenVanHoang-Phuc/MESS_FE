@@ -77,17 +77,17 @@ export default function ConversationPage() {
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
-  const { 
-    incomingMessage, 
-    readEvent, 
-    recalledEvent, 
-    reactionEvent, 
-    typingEvent, 
-    incomingTask, 
-    taskUpdatedEvent, 
-    taskDeletedEvent, 
+  const {
+    incomingMessage,
+    readEvent,
+    recalledEvent,
+    reactionEvent,
+    typingEvent,
+    incomingTask,
+    taskUpdatedEvent,
+    taskDeletedEvent,
     taskReminderEvent,
-    sendTyping 
+    sendTyping
   } = useSignalR(conversationId)
   const [currentUser, setCurrentUser] = useState<any>(null)
   const [hiddenMessageIds, setHiddenMessageIds] = useState<string[]>([])
@@ -152,7 +152,7 @@ export default function ConversationPage() {
       try {
         const saved = localStorage.getItem(`hidden_messages_${conversationId}`)
         if (saved) setHiddenMessageIds(JSON.parse(saved))
-      } catch {}
+      } catch { }
     }
   }, [conversationId])
 
@@ -217,7 +217,7 @@ export default function ConversationPage() {
           (m) =>
             m.id.startsWith("temp-") &&
             (m.content === incomingMessage.content ||
-             (m.attachments && m.attachments.length > 0 && incomingMessage.attachments && incomingMessage.attachments.length > 0))
+              (m.attachments && m.attachments.length > 0 && incomingMessage.attachments && incomingMessage.attachments.length > 0))
         )
         if (tempIndex !== -1) {
           const updated = [...prev]
@@ -405,7 +405,7 @@ export default function ConversationPage() {
         setNewMessageCount((c) => c + 1)
       }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleMessages.length, loading, currentUser])
 
   // Load older historical messages on scroll up (Cursor Pagination)
@@ -474,7 +474,7 @@ export default function ConversationPage() {
     setHiddenMessageIds(next)
     try {
       localStorage.setItem(`hidden_messages_${conversationId}`, JSON.stringify(next))
-    } catch {}
+    } catch { }
   }
 
   async function handleReact(messageId: string, emoji: string) {
@@ -498,11 +498,11 @@ export default function ConversationPage() {
               .map((r) =>
                 r.emoji === emoji
                   ? {
-                      ...r,
-                      count: r.count - 1,
-                      userNames: r.userNames.filter((n) => n !== myName),
-                      userIds: r.userIds?.filter((id) => id !== myId),
-                    }
+                    ...r,
+                    count: r.count - 1,
+                    userNames: r.userNames.filter((n) => n !== myName),
+                    userIds: r.userIds?.filter((id) => id !== myId),
+                  }
                   : r
               )
               .filter((r) => r.count > 0)
@@ -512,11 +512,11 @@ export default function ConversationPage() {
               .map((r) =>
                 r.emoji === existingReaction.emoji
                   ? {
-                      ...r,
-                      count: r.count - 1,
-                      userNames: r.userNames.filter((n) => n !== myName),
-                      userIds: r.userIds?.filter((id) => id !== myId),
-                    }
+                    ...r,
+                    count: r.count - 1,
+                    userNames: r.userNames.filter((n) => n !== myName),
+                    userIds: r.userIds?.filter((id) => id !== myId),
+                  }
                   : r
               )
               .filter((r) => r.count > 0)
@@ -526,11 +526,11 @@ export default function ConversationPage() {
               updated = withoutOld.map((r, i) =>
                 i === targetIdx
                   ? {
-                      ...r,
-                      count: r.count + 1,
-                      userNames: [...r.userNames, myName],
-                      userIds: myId ? [...(r.userIds || []), myId] : r.userIds,
-                    }
+                    ...r,
+                    count: r.count + 1,
+                    userNames: [...r.userNames, myName],
+                    userIds: myId ? [...(r.userIds || []), myId] : r.userIds,
+                  }
                   : r
               )
             } else {
@@ -547,11 +547,11 @@ export default function ConversationPage() {
             updated = curReactions.map((r, i) =>
               i === targetIdx
                 ? {
-                    ...r,
-                    count: r.count + 1,
-                    userNames: [...r.userNames, myName],
-                    userIds: myId ? [...(r.userIds || []), myId] : r.userIds,
-                  }
+                  ...r,
+                  count: r.count + 1,
+                  userNames: [...r.userNames, myName],
+                  userIds: myId ? [...(r.userIds || []), myId] : r.userIds,
+                }
                 : r
             )
           } else {
@@ -1029,7 +1029,7 @@ export default function ConversationPage() {
                       const isSameSenderAsNext = Boolean(
                         nextMessage &&
                         ((message.senderId && nextMessage.senderId && message.senderId === nextMessage.senderId) ||
-                         (message.senderName && nextMessage.senderName && message.senderName === nextMessage.senderName))
+                          (message.senderName && nextMessage.senderName && message.senderName === nextMessage.senderName))
                       )
 
                       const nextHasDateSeparator = (() => {
@@ -1270,8 +1270,8 @@ export default function ConversationPage() {
                                               imageAttachments.length === 1
                                                 ? "w-fit"
                                                 : imageAttachments.length === 2
-                                                ? "grid grid-cols-2 gap-1.5"
-                                                : "grid grid-cols-2 sm:grid-cols-3 gap-1.5"
+                                                  ? "grid grid-cols-2 gap-1.5"
+                                                  : "grid grid-cols-2 sm:grid-cols-3 gap-1.5"
                                             )}
                                           >
                                             {imageAttachments.map((img, idx) => {
@@ -1578,9 +1578,9 @@ export default function ConversationPage() {
           {/* Form Input Box */}
           <form
             onSubmit={handleSendMessage}
-            className="mx-auto flex max-w-3xl items-end gap-2 rounded-2xl border bg-background p-2 shadow-sm"
+            className="mx-auto flex max-w-3xl items-end gap-1.5 sm:gap-2 rounded-2xl border bg-background p-1.5 sm:p-2 shadow-sm"
           >
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-0.5 sm:gap-1">
               <Button
                 type="button"
                 variant="ghost"
@@ -1589,7 +1589,7 @@ export default function ConversationPage() {
                 aria-label="Gửi ảnh hoặc video"
                 title="Gửi hình ảnh/video"
                 disabled={isSending}
-                className="size-9 rounded-xl hover:bg-muted text-muted-foreground hover:text-foreground"
+                className="size-8 sm:size-9 rounded-lg sm:rounded-xl hover:bg-muted text-muted-foreground hover:text-foreground"
               >
                 <ImageIcon className="size-4" />
               </Button>
@@ -1601,7 +1601,7 @@ export default function ConversationPage() {
                 aria-label="Đính kèm tệp tài liệu"
                 title="Đính kèm tài liệu, PDF, Excel, ZIP (Tối đa 30 tệp)"
                 disabled={isSending}
-                className="size-9 rounded-xl hover:bg-muted text-muted-foreground hover:text-foreground cursor-pointer"
+                className="size-8 sm:size-9 rounded-lg sm:rounded-xl hover:bg-muted text-muted-foreground hover:text-foreground cursor-pointer"
               >
                 <Paperclip className="size-4" />
               </Button>
@@ -1617,7 +1617,7 @@ export default function ConversationPage() {
                 aria-label="Giao việc / Tạo Task mới"
                 title="Giao việc / Tạo Task mới trong cuộc trò chuyện"
                 disabled={isSending}
-                className="size-9 rounded-xl hover:bg-primary/10 text-muted-foreground hover:text-primary transition shrink-0 cursor-pointer"
+                className="size-8 sm:size-9 rounded-lg sm:rounded-xl hover:bg-primary/10 text-muted-foreground hover:text-primary transition shrink-0 cursor-pointer"
               >
                 <CheckSquare className="size-4 text-primary" />
               </Button>
@@ -1658,9 +1658,9 @@ export default function ConversationPage() {
                   handleSendMessage(event)
                 }
               }}
-              placeholder={selectedFiles.length > 0 ? "Thêm chú thích cho tệp đính kèm..." : "Nhập tin nhắn (hoặc kéo thả / dán ảnh)..."}
+              placeholder={selectedFiles.length > 0 ? "Thêm chú thích..." : "Nhập tin nhắn..."}
               aria-label="Tin nhắn"
-              className="max-h-32 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none placeholder:text-muted-foreground"
+              className="max-h-32 min-h-9 sm:min-h-10 flex-1 resize-none bg-transparent px-2 py-1.5 sm:py-2 text-xs sm:text-sm outline-none placeholder:text-muted-foreground"
               rows={1}
             />
 
@@ -1669,7 +1669,7 @@ export default function ConversationPage() {
               size="icon"
               aria-label="Gửi tin nhắn"
               disabled={(!draft.trim() && selectedFiles.length === 0) || isSending}
-              className="size-9 rounded-xl bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-40 shrink-0"
+              className="size-8 sm:size-9 rounded-lg sm:rounded-xl bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-40 shrink-0"
             >
               {isSending ? (
                 <Loader2 className="size-4 animate-spin" />
@@ -1679,7 +1679,7 @@ export default function ConversationPage() {
             </Button>
           </form>
 
-          <div className="mx-auto mt-2 flex max-w-3xl items-center justify-between px-1 text-[10px] text-muted-foreground">
+          <div className="mx-auto mt-2 hidden sm:flex max-w-3xl items-center justify-between px-1 text-[10px] text-muted-foreground">
             <span>Enter để gửi · Shift + Enter để xuống dòng</span>
             <span>Hỗ trợ kéo thả hoặc Paste ảnh từ Clipboard</span>
           </div>
@@ -1705,11 +1705,11 @@ export default function ConversationPage() {
 
         {/* Centralized Recall Message Confirmation Modal */}
         {confirmRecallId && (
-          <div 
+          <div
             className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150"
             onClick={() => setConfirmRecallId(null)}
           >
-            <div 
+            <div
               className="w-full max-w-sm rounded-2xl border border-border bg-card p-5 shadow-2xl text-center space-y-4 animate-in zoom-in-95 duration-150"
               onClick={(e) => e.stopPropagation()}
             >
@@ -1754,11 +1754,11 @@ export default function ConversationPage() {
 
         {/* Centralized Delete for Me Confirmation Modal */}
         {confirmDeleteId && (
-          <div 
+          <div
             className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150"
             onClick={() => setConfirmDeleteId(null)}
           >
-            <div 
+            <div
               className="w-full max-w-sm rounded-2xl border border-border bg-card p-5 shadow-2xl text-center space-y-4 animate-in zoom-in-95 duration-150"
               onClick={(e) => e.stopPropagation()}
             >

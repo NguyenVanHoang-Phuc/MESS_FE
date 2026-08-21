@@ -23,6 +23,16 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    // If the error status is 401, it means the token is expired/invalid.
+    // Clear stale token/user and redirect to login page.
+    if (error.response?.status === 401) {
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('token')
+        localStorage.removeItem('user')
+        window.location.href = '/login'
+      }
+    }
+
     const serverMessage =
       error.response?.data?.message ||
       error.response?.data?.error ||
