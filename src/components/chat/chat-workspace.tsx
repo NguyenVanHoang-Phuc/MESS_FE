@@ -685,6 +685,10 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
               )}
               {peopleList.map((person) => {
                 const isSelectedDraft = draftRecipient?.id === person.id
+                const isPersonOnline = Boolean(
+                  (person.id && onlineUserIds.includes(person.id)) ||
+                  ((person as any).userId && onlineUserIds.includes((person as any).userId))
+                )
                 return (
                   <button
                     key={person.id}
@@ -697,8 +701,13 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
                       isSelectedDraft ? "bg-accent font-medium text-accent-foreground" : "hover:bg-muted/70 text-foreground"
                     )}
                   >
-                    <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary font-semibold text-xs">
-                      {person.fullName ? person.fullName.substring(0, 2).toUpperCase() : "NV"}
+                    <div className="relative shrink-0">
+                      <div className="flex size-10 items-center justify-center rounded-full bg-primary/10 text-primary font-semibold text-xs">
+                        {person.fullName ? person.fullName.substring(0, 2).toUpperCase() : "NV"}
+                      </div>
+                      {isPersonOnline && (
+                        <span className="absolute bottom-0 right-0 size-2.5 rounded-full bg-emerald-500 ring-2 ring-card shadow-xs animate-pulse" title="Đang hoạt động" />
+                      )}
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-xs font-medium">{person.fullName}</p>
@@ -736,6 +745,10 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
                   const info = getConversationInfo(item)
                   const isActive = conversationId === item.id && !draftRecipient
                   const isMuted = mutedConversations.includes(item.id)
+                  const isOtherOnline = !info.isGroup && Boolean(
+                    info.otherParticipant?.userId && onlineUserIds.includes(info.otherParticipant.userId)
+                  )
+
                   return (
                     <button
                       key={item.id}
@@ -749,13 +762,18 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
                         isActive ? "bg-accent text-accent-foreground font-medium" : "hover:bg-muted/70 text-foreground"
                       )}
                     >
-                      <div
-                        className={cn(
-                          "flex size-10 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-primary-foreground",
-                          info.isGroup ? "bg-chart-3" : "bg-primary"
+                      <div className="relative shrink-0">
+                        <div
+                          className={cn(
+                            "flex size-10 items-center justify-center rounded-full text-xs font-semibold text-primary-foreground",
+                            info.isGroup ? "bg-chart-3" : "bg-primary"
+                          )}
+                        >
+                          {info.isGroup ? <Users className="size-4" /> : info.avatarText}
+                        </div>
+                        {isOtherOnline && (
+                          <span className="absolute bottom-0 right-0 size-2.5 rounded-full bg-emerald-500 ring-2 ring-card shadow-xs animate-pulse" title="Đang hoạt động" />
                         )}
-                      >
-                        {info.isGroup ? <Users className="size-4" /> : info.avatarText}
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-2">
@@ -839,33 +857,48 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
               </>
             )}
             {/* Show real conversation info only when NOT in draft mode */}
-            {!draftRecipient && selectedInfo && (
-              <>
-                <div
-                  className={cn(
-                    "flex size-10 items-center justify-center rounded-full text-xs font-semibold text-primary-foreground",
-                    selectedInfo.isGroup ? "bg-chart-3" : "bg-primary"
-                  )}
-                >
-                  {selectedInfo.isGroup ? <Users className="size-5" /> : selectedInfo.avatarText}
-                </div>
-                <div className="min-w-0">
-                  <h2 className="truncate text-sm font-semibold">{selectedInfo.name}</h2>
-                  <p className="text-xs text-muted-foreground">
-                    {headerTypingUser ? (
-                      <span className="text-primary font-medium flex items-center gap-1.5 animate-pulse">
-                        <span className="size-1.5 rounded-full bg-primary animate-ping" />
-                        <span>{headerTypingUser} đang nhập tin nhắn...</span>
-                      </span>
-                    ) : selectedInfo.isGroup ? (
-                      `${selectedInfo.members} thành viên ${isCurrentUserAdmin ? '· Bạn là Quản trị viên' : ''}`
-                    ) : (
-                      "Trực tuyến"
+            {!draftRecipient && selectedInfo && (() => {
+              const isOtherOnline = !selectedInfo.isGroup && Boolean(
+                selectedInfo.otherParticipant?.userId && onlineUserIds.includes(selectedInfo.otherParticipant.userId)
+              )
+              return (
+                <>
+                  <div className="relative shrink-0">
+                    <div
+                      className={cn(
+                        "flex size-10 items-center justify-center rounded-full text-xs font-semibold text-primary-foreground shadow-xs",
+                        selectedInfo.isGroup ? "bg-chart-3" : "bg-primary"
+                      )}
+                    >
+                      {selectedInfo.isGroup ? <Users className="size-5" /> : selectedInfo.avatarText}
+                    </div>
+                    {isOtherOnline && (
+                      <span className="absolute bottom-0 right-0 size-2.5 rounded-full bg-emerald-500 ring-2 ring-card shadow-xs animate-pulse" title="Đang hoạt động" />
                     )}
-                  </p>
-                </div>
-              </>
-            )}
+                  </div>
+                  <div className="min-w-0">
+                    <h2 className="truncate text-sm font-semibold">{selectedInfo.name}</h2>
+                    <p className="text-xs text-muted-foreground">
+                      {headerTypingUser ? (
+                        <span className="text-primary font-medium flex items-center gap-1.5 animate-pulse">
+                          <span className="size-1.5 rounded-full bg-primary animate-ping" />
+                          <span>{headerTypingUser} đang nhập tin nhắn...</span>
+                        </span>
+                      ) : selectedInfo.isGroup ? (
+                        `${selectedInfo.members} thành viên ${isCurrentUserAdmin ? '· Bạn là Quản trị viên' : ''}`
+                      ) : isOtherOnline ? (
+                        <span className="text-emerald-500 font-medium flex items-center gap-1.5">
+                          <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                          <span>Đang hoạt động</span>
+                        </span>
+                      ) : (
+                        <span>Ngoại tuyến</span>
+                      )}
+                    </p>
+                  </div>
+                </>
+              )
+            })()}
             {!draftRecipient && !selectedInfo && <h2 className="text-sm font-semibold text-muted-foreground">Chọn một hội thoại</h2>}
           </div>
           <div className="flex items-center gap-1">
@@ -966,17 +999,37 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
 
           {/* Group / Person Profile Header */}
           <div className="flex flex-col items-center border-b px-5 py-6">
-            <div
-              className={cn(
-                "flex size-16 items-center justify-center rounded-2xl text-base font-semibold text-primary-foreground shadow-sm",
-                selectedInfo.isGroup ? "bg-chart-3" : "bg-primary"
-              )}
-            >
-              {selectedInfo.isGroup ? <Users className="size-7" /> : selectedInfo.avatarText}
-            </div>
+            {(() => {
+              const isOtherOnline = !selectedInfo.isGroup && Boolean(
+                selectedInfo.otherParticipant?.userId && onlineUserIds.includes(selectedInfo.otherParticipant.userId)
+              )
+              return (
+                <div className="relative">
+                  <div
+                    className={cn(
+                      "flex size-16 items-center justify-center rounded-2xl text-base font-semibold text-primary-foreground shadow-sm",
+                      selectedInfo.isGroup ? "bg-chart-3" : "bg-primary"
+                    )}
+                  >
+                    {selectedInfo.isGroup ? <Users className="size-7" /> : selectedInfo.avatarText}
+                  </div>
+                  {isOtherOnline && (
+                    <span className="absolute bottom-0 right-0 size-3.5 rounded-full bg-emerald-500 ring-2 ring-card shadow-xs animate-pulse" title="Đang hoạt động" />
+                  )}
+                </div>
+              )
+            })()}
             <h3 className="mt-3 text-sm font-semibold text-center">{selectedInfo.name}</h3>
             <p className="mt-1 text-xs text-muted-foreground">
-              {selectedInfo.isGroup ? "Nhóm làm việc" : "Trò chuyện trực tiếp"}
+              {selectedInfo.isGroup ? "Nhóm làm việc" : (
+                selectedInfo.otherParticipant?.userId && onlineUserIds.includes(selectedInfo.otherParticipant.userId) ? (
+                  <span className="text-emerald-500 font-medium flex items-center justify-center gap-1">
+                    <span className="size-1.5 rounded-full bg-emerald-500" /> Đang hoạt động
+                  </span>
+                ) : (
+                  "Ngoại tuyến"
+                )
+              )}
             </p>
             <div className="mt-3 flex items-center gap-2">
               <button
@@ -1027,15 +1080,24 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
                     (currentUser?.userId && participant.userId === currentUser.userId) ||
                     (currentUser?.fullName && participant.fullName === currentUser.fullName) ||
                     (currentUser?.username && participant.username === currentUser.username)
+                  const isMemberOnline = isMe || (participant.userId && onlineUserIds.includes(participant.userId))
 
                   return (
                     <div key={participant.userId || participant.username} className="flex items-center justify-between py-2 text-xs">
                       <div className="flex items-center gap-2.5 min-w-0">
-                        <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted font-medium text-[10px]">
-                          {participant.fullName.substring(0, 2).toUpperCase()}
+                        <div className="relative shrink-0">
+                          <div className="flex size-7 items-center justify-center rounded-full bg-muted font-medium text-[10px]">
+                            {participant.fullName.substring(0, 2).toUpperCase()}
+                          </div>
+                          {isMemberOnline && (
+                            <span className="absolute -bottom-0.5 -right-0.5 size-2 rounded-full bg-emerald-500 ring-1 ring-card shadow-xs" title="Đang hoạt động" />
+                          )}
                         </div>
                         <div className="min-w-0">
-                          <p className="font-medium truncate">{participant.fullName} {isMe && '(Bạn)'}</p>
+                          <p className="font-medium truncate flex items-center gap-1.5">
+                            <span>{participant.fullName} {isMe && '(Bạn)'}</span>
+                            {isMemberOnline && <span className="size-1.5 rounded-full bg-emerald-500" title="Online" />}
+                          </p>
                           <p className="text-[10px] text-muted-foreground truncate">{participant.role || 'Thành viên'}</p>
                         </div>
                       </div>
