@@ -24,8 +24,11 @@ export default function LoginPage() {
       })
 
       if (result.success) {
-        // Navigate to chat which will auto-redirect to latest conversation
-        router.push('/chat')
+        if (result.data?.roleName?.toLowerCase() === 'admin') {
+          router.push('/dashboard')
+        } else {
+          router.push('/chat')
+        }
       } else {
         setError(result.message || 'Tên đăng nhập hoặc mật khẩu không chính xác.')
       }

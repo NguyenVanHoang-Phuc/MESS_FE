@@ -2,11 +2,14 @@
 
 import { useEffect, useRef, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
+import Link from "next/link"
 import {
   AlertTriangle,
   ArrowLeft,
   Bell,
   BellOff,
+  Building2,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Download,
@@ -15,11 +18,13 @@ import {
   FileArchive,
   FileSpreadsheet,
   FileText,
+  FolderTree,
   ImageIcon,
   Info,
   Loader2,
   LogOut,
   Menu,
+  MessageSquare,
   MoreHorizontal,
   Plus,
   Search,
@@ -36,6 +41,7 @@ import {
 import { cn } from "@/utils/cn"
 import { deleteConversationApi, getConversations, getMessages, removeParticipantApi, searchUsersApi } from "@/services/api/chat"
 import { getCurrentUser, logoutUser } from "@/services/api/auth"
+import { getOrgTree, DepartmentTreeNode, DirectoryUser } from "@/lib/org-api"
 import { useSignalR } from "@/hooks/useSignalR"
 import { formatCleanFileName, formatFileSize, formatMessageTime } from "@/utils/formatters"
 import { playNotificationSound } from "@/utils/sound"
@@ -104,6 +110,29 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
       if (headerTypingTimerRef.current) clearTimeout(headerTypingTimerRef.current)
     }
   }, [typingEvent, conversationId, currentUser])
+
+  const [orgTree, setOrgTree] = useState<DepartmentTreeNode[]>([])
+  const [loadingOrgTree, setLoadingOrgTree] = useState(false)
+  const [expandedDeptIds, setExpandedDeptIds] = useState<string[]>([])
+
+  useEffect(() => {
+    if (activeTab === "Danh bạ") {
+      setLoadingOrgTree(true)
+      getOrgTree()
+        .then((tree) => {
+          setOrgTree(tree)
+          setExpandedDeptIds(tree.map((d) => d.id))
+        })
+        .catch((err) => console.error("Failed to load org tree", err))
+        .finally(() => setLoadingOrgTree(false))
+    }
+  }, [activeTab])
+
+  const toggleDeptExpand = (id: string) => {
+    setExpandedDeptIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    )
+  }
 
   // Realtime: Listen to local message sent events with attachments
   useEffect(() => {
@@ -313,7 +342,7 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
   // Update browser tab title with total unread count
   useEffect(() => {
     const totalUnread = conversations.reduce((sum, c) => sum + (c.unreadCount || 0), 0)
-    document.title = totalUnread > 0 ? `(${totalUnread}) Nexus — Trò chuyện` : "Nexus — Trò chuyện"
+    document.title = totalUnread > 0 ? `(${totalUnread}) MES — Trò chuyện` : "MES — Trò chuyện"
   }, [conversations])
 
   // Real-time remove conversation when disbanded
@@ -627,13 +656,13 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
           </div>
         </div>
 
-        <div className="flex gap-1 border-b px-3 pt-3">
-          {["Hội thoại", "Người", "Nhóm"].map((tab) => (
+        <div className="flex gap-1 border-b px-2 pt-3">
+          {["Hội thoại", "Người", "Nhóm", "Danh bạ"].map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
               className={cn(
-                "flex-1 rounded-t-lg px-2 py-2 text-xs font-medium transition",
+                "flex-1 rounded-t-lg px-1.5 py-2 text-[11px] font-medium transition whitespace-nowrap",
                 activeTab === tab
                   ? "border-b-2 border-primary text-primary font-semibold"
                   : "text-muted-foreground hover:text-foreground"
@@ -651,7 +680,13 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
               value={searchSidebar}
               onChange={(e) => setSearchSidebar(e.target.value)}
               className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
-              placeholder={activeTab === "Người" ? "Tìm nhân viên để nhắn tin..." : "Tìm kiếm cuộc trò chuyện..."}
+              placeholder={
+                activeTab === "Người"
+                  ? "Tìm nhân viên để nhắn tin..."
+                  : activeTab === "Danh bạ"
+                  ? "Tìm phòng ban, nhân sự trong danh bạ..."
+                  : "Tìm kiếm cuộc trò chuyện..."
+              }
             />
             {searchSidebar && (
               <button onClick={() => setSearchSidebar("")} className="text-muted-foreground hover:text-foreground">
@@ -669,7 +704,147 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
         </div>
 
         <div className="flex-1 overflow-y-auto px-2">
-          {activeTab === "Người" ? (
+          {activeTab === "Danh bạ" ? (
+            /* Org Directory Tree (MES-015) */
+            <div className="flex flex-col gap-2 pt-1 pb-4">
+              <div className="flex items-center justify-between px-3 pb-1">
+                <span className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                  <FolderTree className="size-3.5 text-primary" /> Sơ đồ tổ chức
+                </span>
+                <span className="text-[10px] text-muted-foreground">{orgTree.length} phòng ban</span>
+              </div>
+
+              {loadingOrgTree && (
+                <div className="p-6 text-center text-xs text-muted-foreground flex items-center justify-center gap-2">
+                  <Loader2 className="size-4 animate-spin text-primary" /> Đang tải danh bạ...
+                </div>
+              )}
+
+              {!loadingOrgTree && orgTree.length === 0 && (
+                <div className="p-6 text-center text-xs text-muted-foreground">
+                  Chưa có dữ liệu danh bạ tổ chức.
+                </div>
+              )}
+
+              {orgTree.map((dept) => {
+                const isExpanded = expandedDeptIds.includes(dept.id)
+                const deptFilteredUsers = dept.users.filter(
+                  (u) =>
+                    !searchSidebar.trim() ||
+                    u.fullName.toLowerCase().includes(searchSidebar.toLowerCase()) ||
+                    u.username.toLowerCase().includes(searchSidebar.toLowerCase()) ||
+                    (u.positionTitle && u.positionTitle.toLowerCase().includes(searchSidebar.toLowerCase()))
+                )
+
+                return (
+                  <div key={dept.id} className="rounded-xl border border-border/70 bg-card overflow-hidden shadow-2xs">
+                    {/* Department Header */}
+                    <div
+                      onClick={() => toggleDeptExpand(dept.id)}
+                      className="flex items-center justify-between p-2.5 hover:bg-muted/60 transition cursor-pointer select-none"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        {isExpanded ? (
+                          <ChevronDown className="size-3.5 text-muted-foreground shrink-0" />
+                        ) : (
+                          <ChevronRight className="size-3.5 text-muted-foreground shrink-0" />
+                        )}
+                        <Building2 className="size-4 text-primary shrink-0" />
+                        <span className="truncate text-xs font-bold text-foreground">{dept.name}</span>
+                        {dept.code && (
+                          <span className="rounded bg-muted px-1.5 py-0.2 text-[9px] font-semibold text-muted-foreground shrink-0">
+                            {dept.code}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-1 shrink-0 ml-1">
+                        <span className="rounded-full bg-primary/10 px-1.5 py-0.2 text-[10px] font-bold text-primary">
+                          {dept.users.length}
+                        </span>
+
+                        {dept.defaultConversationId && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setIsMobileSidebarOpen(false)
+                              router.push(`/chat/${dept.defaultConversationId}`)
+                            }}
+                            className="p-1 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 transition"
+                            title={`Mở nhóm chat ${dept.name}`}
+                          >
+                            <MessageSquare className="size-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Department Employees List */}
+                    {isExpanded && (
+                      <div className="bg-muted/20 border-t border-border/50 divide-y divide-border/40">
+                        {deptFilteredUsers.length === 0 ? (
+                          <div className="px-4 py-2.5 text-[11px] text-muted-foreground italic">
+                            Chưa có nhân sự trong phòng ban này
+                          </div>
+                        ) : (
+                          deptFilteredUsers.map((emp) => {
+                            const isOnline = onlineUserIds.includes(emp.id)
+                            return (
+                              <div
+                                key={emp.id}
+                                className="flex items-center justify-between px-3 py-2 hover:bg-muted/60 transition group"
+                              >
+                                <div className="flex items-center gap-2.5 min-w-0">
+                                  <div className="relative shrink-0">
+                                    <div className="flex size-7 items-center justify-center rounded-full bg-primary/10 text-primary font-bold text-[10px]">
+                                      {emp.fullName ? emp.fullName.substring(0, 2).toUpperCase() : "NV"}
+                                    </div>
+                                    {isOnline && (
+                                      <span
+                                        className="absolute -bottom-0.5 -right-0.5 size-2 rounded-full bg-emerald-500 ring-1 ring-card animate-pulse"
+                                        title="Đang online"
+                                      />
+                                    )}
+                                  </div>
+
+                                  <div className="min-w-0">
+                                    <p className="truncate text-xs font-medium text-foreground">{emp.fullName}</p>
+                                    <p className="truncate text-[10px] text-muted-foreground">
+                                      {emp.positionTitle || emp.roleName || emp.workShiftName || `@${emp.username}`}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setIsMobileSidebarOpen(false)
+                                    handleSelectPerson({
+                                      id: emp.id,
+                                      username: emp.username,
+                                      fullName: emp.fullName,
+                                      roleName: emp.roleName || "",
+                                      departmentName: dept.name,
+                                    } as any)
+                                  }}
+                                  className="flex items-center gap-1 px-2 py-1 rounded-md bg-primary/10 text-primary hover:bg-primary hover:text-primary-foreground transition text-[10px] font-semibold opacity-80 group-hover:opacity-100 shrink-0"
+                                  title="Nhắn tin 1-1"
+                                >
+                                  <MessageSquare className="size-3" />
+                                  <span>Chat</span>
+                                </button>
+                              </div>
+                            )
+                          })
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          ) : activeTab === "Người" ? (
             /* People List for Direct Messaging (Section 13) */
             <div className="flex flex-col gap-1 pt-1">
               <div className="flex items-center justify-between px-3 pb-2">
@@ -800,15 +975,27 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
           )}
         </div>
 
-        {/* User Profile Bar */}
-        <div className="border-t p-3 bg-card">
-          <div className="flex items-center gap-3 rounded-xl p-2 hover:bg-muted/50 transition">
-            <div className="flex size-9 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
+        {/* User Profile Bar & Admin Shortcut */}
+        <div className="border-t p-3 bg-card space-y-2">
+          {currentUser?.roleName?.toLowerCase() === "admin" && (
+            <Link
+              href="/dashboard"
+              className="flex items-center justify-center gap-1.5 w-full py-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary hover:text-primary-foreground transition text-xs font-bold shadow-2xs"
+            >
+              <Settings className="size-3.5" />
+              <span>Trang Quản trị (Admin)</span>
+            </Link>
+          )}
+
+          <div className="flex items-center gap-3 rounded-xl p-1.5 hover:bg-muted/50 transition">
+            <div className="flex size-8 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
               {currentUser?.fullName ? currentUser.fullName.substring(0, 2).toUpperCase() : "AN"}
             </div>
             <div className="min-w-0 flex-1">
               <p className="truncate text-xs font-medium">{currentUser?.fullName || "Anh Nguyễn"}</p>
-              <p className="text-[10px] text-muted-foreground">{currentUser?.roleName || currentUser?.departmentName || "Đang hoạt động"}</p>
+              <p className="text-[10px] text-muted-foreground">
+                {currentUser?.roleName === "Admin" ? "Quản trị viên" : currentUser?.departmentName || "Đang hoạt động"}
+              </p>
             </div>
             <button
               onClick={() => {
@@ -944,6 +1131,16 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
             >
               <Plus className="size-4" />
             </button>
+            {currentUser?.roleName?.toLowerCase() === "admin" && (
+              <Link
+                href="/dashboard"
+                className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-primary/20 bg-primary/10 text-primary hover:bg-primary hover:text-primary-foreground transition text-xs font-semibold ml-1 shadow-2xs"
+                title="Đến Trang Quản trị (Admin Portal)"
+              >
+                <Settings className="size-3.5" />
+                <span>Quản trị</span>
+              </Link>
+            )}
           </div>
         </header>
 

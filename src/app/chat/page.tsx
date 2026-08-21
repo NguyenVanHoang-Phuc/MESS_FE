@@ -43,7 +43,7 @@ export default function ChatIndexPage() {
       <div className="flex size-16 items-center justify-center rounded-3xl bg-primary/10 text-primary mb-4">
         <MessagesSquare className="size-8" />
       </div>
-      <h2 className="text-lg font-semibold tracking-tight">Chào mừng bạn đến với Nexus Chat</h2>
+      <h2 className="text-lg font-semibold tracking-tight">Chào mừng bạn đến với MES Chat</h2>
       <p className="mt-1 text-xs text-muted-foreground max-w-sm">
         Bạn chưa có cuộc hội thoại nào hoặc chưa chọn đoạn chat. Hãy chọn một cuộc trò chuyện từ thanh bên trái hoặc tạo nhóm chat mới!
       </p>
