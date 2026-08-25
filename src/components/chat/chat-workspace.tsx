@@ -21,6 +21,7 @@ import {
   FolderTree,
   ImageIcon,
   Info,
+  LayoutDashboard,
   Loader2,
   LogOut,
   Menu,
@@ -30,6 +31,7 @@ import {
   Search,
   Settings,
   ShieldCheck,
+  Smartphone,
   Trash2,
   UserCheck,
   UserMinus,
@@ -50,6 +52,9 @@ import { AddMembersModal } from "@/components/chat/add-members-modal"
 import { DraftChatWorkspace } from "@/components/chat/draft-chat-workspace"
 import { MessageSearchModal } from "@/components/chat/message-search-modal"
 import { NotificationToast, type ToastNotificationItem } from "@/components/chat/notification-toast"
+import { ZaloBroadcastModal } from "@/components/zalo/zalo-broadcast-modal"
+import { ZaloPhoneSimulator } from "@/components/zalo/zalo-phone-simulator"
+import type { ZaloNotificationLogItem } from "@/lib/zalo-api"
 import { Button } from "@/components/ui/button"
 import type { AttachmentResponse, ConversationResponse, ParticipantResponse, UserSummaryResponse } from "@/types/chat"
 
@@ -79,6 +84,9 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
   const [galleryIndex, setGalleryIndex] = useState(0)
   const [showDocumentsModal, setShowDocumentsModal] = useState(false)
   const [docSearchQuery, setDocSearchQuery] = useState("")
+  const [isZaloBroadcastOpen, setIsZaloBroadcastOpen] = useState(false)
+  const [isZaloSimOpen, setIsZaloSimOpen] = useState(false)
+  const [zaloLogs, setZaloLogs] = useState<ZaloNotificationLogItem[]>([])
 
   // On desktop xl: screens (>= 1280px), show details panel by default
   useEffect(() => {
@@ -637,7 +645,15 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">MES</p>
             <h1 className="mt-1 text-xl font-semibold tracking-tight">Tin nhắn</h1>
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => setIsZaloBroadcastOpen(true)}
+              className="flex items-center gap-1 px-2 py-1.5 rounded-lg border border-blue-500/30 bg-[#0068FF]/10 text-[#0068FF] hover:bg-[#0068FF]/20 text-xs font-bold transition shadow-2xs"
+              title="Đẩy thông báo ca học Zalo OA (Mô phỏng Simulator)"
+            >
+              <Smartphone className="size-3.5" />
+              <span className="hidden sm:inline">Zalo OA</span>
+            </button>
             <button
               onClick={() => setIsCreateGroupOpen(true)}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition shadow-sm"
@@ -997,6 +1013,16 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
                 {currentUser?.roleName === "Admin" ? "Quản trị viên" : currentUser?.departmentName || "Đang hoạt động"}
               </p>
             </div>
+            {currentUser?.roleName?.toLowerCase() === "admin" && (
+              <Link
+                href="/dashboard"
+                title="Trang Quản trị"
+                aria-label="Trang Quản trị"
+                className="text-primary hover:bg-primary/10 p-1.5 rounded-lg transition flex items-center gap-1 text-[11px] font-bold"
+              >
+                <LayoutDashboard className="size-4" />
+              </Link>
+            )}
             <button
               onClick={() => {
                 logoutUser()
@@ -1705,6 +1731,23 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
           </div>
         )
       })()}
+
+      {/* Zalo Broadcast Modal */}
+      <ZaloBroadcastModal
+        isOpen={isZaloBroadcastOpen}
+        onClose={() => setIsZaloBroadcastOpen(false)}
+        onSuccessOpenSimulator={(logs) => {
+          setZaloLogs(logs)
+          setIsZaloSimOpen(true)
+        }}
+      />
+
+      {/* Zalo Phone Simulator Widget */}
+      <ZaloPhoneSimulator
+        isOpen={isZaloSimOpen}
+        onClose={() => setIsZaloSimOpen(false)}
+        notifications={zaloLogs}
+      />
     </div>
   )
 }
