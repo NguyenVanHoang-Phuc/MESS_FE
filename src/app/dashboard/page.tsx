@@ -43,6 +43,10 @@ import {
   WorkShiftItem,
   RoleItem
 } from '@/lib/org-api'
+import { ZaloBroadcastModal } from '@/components/zalo/zalo-broadcast-modal'
+import { ZaloPhoneSimulator } from '@/components/zalo/zalo-phone-simulator'
+import { ZaloNotificationLogItem } from '@/lib/zalo-api'
+import { logoutUser } from '@/services/api/auth'
 
 export default function AdminDashboardPage() {
   const router = useRouter()
@@ -91,6 +95,11 @@ export default function AdminDashboardPage() {
   const [newShiftEnd, setNewShiftEnd] = useState('14:00')
   const [newShiftDeptId, setNewShiftDeptId] = useState('')
   const [isSavingShift, setIsSavingShift] = useState(false)
+
+  // Zalo Notification Simulator Modals
+  const [isZaloModalOpen, setIsZaloModalOpen] = useState(false)
+  const [isZaloSimOpen, setIsZaloSimOpen] = useState(false)
+  const [zaloLogs, setZaloLogs] = useState<ZaloNotificationLogItem[]>([])
 
   // Load User & Check Auth
   useEffect(() => {
@@ -292,6 +301,15 @@ export default function AdminDashboardPage() {
         {/* Action Shortcuts */}
         <div className="flex items-center gap-2.5">
           <button
+            onClick={() => setIsZaloModalOpen(true)}
+            className="flex items-center gap-1.5 rounded-xl border border-blue-500/30 bg-[#0068FF]/10 text-[#0068FF] hover:bg-[#0068FF]/20 px-3.5 py-2 text-xs font-bold transition cursor-pointer shadow-xs"
+            title="Đẩy thông báo ca học qua Zalo OA (Mô phỏng 100% Free)"
+          >
+            <Sparkles className="size-3.5" />
+            <span>Gửi Zalo OA (Simulator)</span>
+          </button>
+
+          <button
             onClick={handleSyncGroups}
             disabled={isSyncing}
             className="flex items-center gap-1.5 rounded-xl border border-border bg-background px-3 py-2 text-xs font-semibold hover:bg-muted transition disabled:opacity-50 cursor-pointer shadow-xs"
@@ -311,11 +329,29 @@ export default function AdminDashboardPage() {
             <ArrowRight className="size-3.5 hidden sm:inline" />
           </Link>
 
-          {/* User Profile */}
-          <div className="flex items-center gap-2 pl-2 border-l border-border">
-            <div className="flex size-9 items-center justify-center rounded-full bg-primary/15 text-xs font-bold text-primary border border-primary/20">
+          {/* User Profile & Logout */}
+          <div className="flex items-center gap-2.5 pl-2 border-l border-border">
+            <div className="flex size-9 items-center justify-center rounded-full bg-primary/15 text-xs font-bold text-primary border border-primary/20 shrink-0">
               {currentUser?.fullName ? currentUser.fullName.substring(0, 2).toUpperCase() : 'AD'}
             </div>
+            <div className="hidden lg:block text-left">
+              <p className="text-xs font-bold leading-tight truncate max-w-[120px] text-foreground">
+                {currentUser?.fullName || 'Quản trị viên'}
+              </p>
+              <p className="text-[10px] text-muted-foreground leading-tight">Admin Portal</p>
+            </div>
+            <button
+              onClick={() => {
+                logoutUser()
+                router.push('/login')
+              }}
+              title="Đăng xuất khỏi hệ thống"
+              aria-label="Đăng xuất"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-border bg-background text-muted-foreground hover:text-destructive hover:bg-destructive/10 hover:border-destructive/30 text-xs font-semibold transition cursor-pointer shadow-2xs"
+            >
+              <LogOut className="size-3.5" />
+              <span className="hidden xl:inline">Đăng xuất</span>
+            </button>
           </div>
         </div>
       </header>
@@ -1098,6 +1134,22 @@ export default function AdminDashboardPage() {
           </div>
         </div>
       )}
+      {/* Zalo Broadcast Modal */}
+      <ZaloBroadcastModal
+        isOpen={isZaloModalOpen}
+        onClose={() => setIsZaloModalOpen(false)}
+        onSuccessOpenSimulator={(logs) => {
+          setZaloLogs(logs)
+          setIsZaloSimOpen(true)
+        }}
+      />
+
+      {/* Zalo Phone Simulator Widget */}
+      <ZaloPhoneSimulator
+        isOpen={isZaloSimOpen}
+        onClose={() => setIsZaloSimOpen(false)}
+        notifications={zaloLogs}
+      />
     </div>
   )
 }
