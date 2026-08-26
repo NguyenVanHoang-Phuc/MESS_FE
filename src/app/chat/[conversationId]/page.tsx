@@ -1062,7 +1062,16 @@ export default function ConversationPage() {
                         )
                       })()
 
-                      // Consecutive message grouping (no time limit - all consecutive messages from same sender)
+                      // Consecutive message grouping:
+                      // Check if same sender as previous message
+                      const isSameSenderAsPrev = Boolean(
+                        prevMessage &&
+                        !showDateSeparator &&
+                        ((message.senderId && prevMessage.senderId && message.senderId === prevMessage.senderId) ||
+                          (message.senderName && prevMessage.senderName && message.senderName === prevMessage.senderName))
+                      )
+
+                      // Check if same sender as next message
                       const isSameSenderAsNext = Boolean(
                         nextMessage &&
                         ((message.senderId && nextMessage.senderId && message.senderId === nextMessage.senderId) ||
@@ -1079,6 +1088,9 @@ export default function ConversationPage() {
                           curr.getDate() !== next.getDate()
                         )
                       })()
+
+                      // isFirstInGroup: True if this is the start of a consecutive message block from this sender
+                      const isFirstInGroup = !isSameSenderAsPrev
 
                       // isLastInGroup: True if this is the last consecutive message from this sender before someone else talks or date changes
                       const isLastInGroup = !isSameSenderAsNext || nextHasDateSeparator
@@ -1155,22 +1167,22 @@ export default function ConversationPage() {
 
                           <Message
                             align={isOwn ? "end" : "start"}
-                            className={cn("relative", isLastInGroup ? "mb-4" : "mb-1")}
+                            className={cn("relative", isLastInGroup ? "mb-3.5" : "mb-1")}
                           >
-                            {isLastInGroup ? (
-                              <MessageAvatar className="size-8 border bg-card text-xs font-semibold shrink-0">
-                                <span className="sr-only">{isOwn ? "Bạn" : message.senderName}</span>
-                                {isOwn
-                                  ? (currentUser?.fullName ? currentUser.fullName.substring(0, 2).toUpperCase() : "AN")
-                                  : (message.senderName ? message.senderName.substring(0, 2).toUpperCase() : <User className="size-4" />)}
-                              </MessageAvatar>
-                            ) : (
-                              <div className="size-8 shrink-0" aria-hidden="true" />
+                            {!isOwn && (
+                              isFirstInGroup ? (
+                                <MessageAvatar className="size-8 border bg-card text-xs font-semibold shrink-0">
+                                  <span className="sr-only">{message.senderName}</span>
+                                  {message.senderName ? message.senderName.substring(0, 2).toUpperCase() : <User className="size-4" />}
+                                </MessageAvatar>
+                              ) : (
+                                <div className="size-8 shrink-0" aria-hidden="true" />
+                              )
                             )}
                             <div className={isOwn ? "flex flex-col items-end max-w-[80%] relative" : "flex flex-col items-start max-w-[80%] relative"}>
-                              {isLastInGroup && (
+                              {isFirstInGroup && (
                                 <div className="mb-1 flex items-center gap-1.5 px-1 text-[11px] text-muted-foreground">
-                                  <span className="font-medium">{isOwn ? "Bạn" : message.senderName}</span>
+                                  <span className="font-medium text-foreground/80">{isOwn ? "Bạn" : message.senderName}</span>
                                   {timeStr && <span>{timeStr}</span>}
 
                                   {/* Message Status Tick (For sender) */}
