@@ -107,7 +107,14 @@ export function MessageSearchModal({
 
   function handleSelectResult(item: MessageSearchResultItem) {
     onClose()
-    router.push(`/chat/${item.conversationId}`)
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('scroll-to-message', {
+          detail: { messageId: item.messageId, conversationId: item.conversationId },
+        })
+      )
+    }
+    router.push(`/chat/${item.conversationId}?msgId=${item.messageId}`)
   }
 
   // Highlight matching keyword
