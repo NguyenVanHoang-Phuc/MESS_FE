@@ -182,9 +182,9 @@ export function CreateTaskModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="relative w-full max-w-lg rounded-2xl border bg-card p-6 shadow-2xl animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
+      <div className="relative w-full max-w-lg rounded-2xl border bg-card shadow-2xl animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh] overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between border-b pb-4 shrink-0">
+        <div className="flex items-center justify-between border-b px-6 py-4 shrink-0 bg-card">
           <div className="flex items-center gap-3">
             <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10 text-primary border border-primary/20">
               <CheckSquare className="size-5" />
@@ -204,6 +204,7 @@ export function CreateTaskModal({
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
             className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition cursor-pointer"
             aria-label="Đóng"
@@ -213,7 +214,7 @@ export function CreateTaskModal({
         </div>
 
         {/* Form Body */}
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto py-4 space-y-4 pr-1">
+        <form id="create-task-form" onSubmit={handleSubmit} className="flex-1 overflow-y-auto overflow-x-hidden px-6 py-4 space-y-4 custom-scrollbar">
           {error && (
             <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive flex items-center gap-2">
               <span>⚠️</span>
@@ -314,7 +315,7 @@ export function CreateTaskModal({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-36 overflow-y-auto rounded-xl border p-2 bg-muted/20">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-36 overflow-y-auto overflow-x-hidden custom-scrollbar rounded-xl border p-2 bg-muted/20">
               {participants.map((p) => {
                 const isSelected = selectedAssigneeIds.includes(p.userId)
                 return (
@@ -430,39 +431,40 @@ export function CreateTaskModal({
               </div>
             </div>
           </div>
-
-          {/* Footer Actions */}
-          <div className="flex items-center justify-end gap-2.5 pt-4 border-t mt-4">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={onClose}
-              disabled={loading}
-              className="text-xs"
-            >
-              Hủy
-            </Button>
-            <Button
-              type="submit"
-              size="sm"
-              disabled={loading || !title.trim()}
-              className="text-xs gap-1.5 shadow-sm"
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="size-3.5 animate-spin" />
-                  Đang tạo task...
-                </>
-              ) : (
-                <>
-                  <CheckSquare className="size-3.5" />
-                  Tạo Task công việc
-                </>
-              )}
-            </Button>
-          </div>
         </form>
+
+        {/* Footer Actions (Fixed at bottom) */}
+        <div className="flex items-center justify-end gap-2.5 px-6 py-3.5 border-t bg-muted/15 shrink-0">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onClose}
+            disabled={loading}
+            className="text-xs cursor-pointer"
+          >
+            Hủy
+          </Button>
+          <Button
+            type="submit"
+            form="create-task-form"
+            size="sm"
+            disabled={loading || !title.trim()}
+            className="text-xs gap-1.5 shadow-sm cursor-pointer"
+          >
+            {loading ? (
+              <>
+                <Loader2 className="size-3.5 animate-spin" />
+                Đang tạo task...
+              </>
+            ) : (
+              <>
+                <CheckSquare className="size-3.5" />
+                Tạo Task công việc
+              </>
+            )}
+          </Button>
+        </div>
       </div>
     </div>
   )

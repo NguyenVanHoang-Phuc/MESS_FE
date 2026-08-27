@@ -161,3 +161,57 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Sleek Modern Scrollbar (Cross-browser) */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: oklch(0.5 0.02 255 / 25%);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.5 0.02 255 / 45%);
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: oklch(0.8 0.02 255 / 25%);
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.8 0.02 255 / 40%);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: oklch(0.5 0.02 255 / 25%) transparent;
+}
+
+.dark * {
+  scrollbar-color: oklch(0.8 0.02 255 / 25%) transparent;
+}
+
+.custom-scrollbar {
+  scrollbar-width: thin;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
