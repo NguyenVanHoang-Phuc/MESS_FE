@@ -58,4 +58,20 @@ test.describe('Luồng 1: Xác thực & Phân quyền Điều hướng (Auth & R
     await page.getByRole('button', { name: 'Đăng xuất' }).first().click()
     await expect(page).toHaveURL(/.*login/)
   })
+
+  test('1.6: User thường truy cập trực tiếp /dashboard bằng URL -> Tự động chặn và chuyển hướng về /chat', async ({ page }) => {
+    // 1. Đăng nhập tài khoản thường (userA)
+    await page.goto(`${BASE_URL}/login`)
+    await page.getByLabel(/Tên đăng nhập \/ Email/i).fill('userA')
+    await page.getByLabel(/Mật khẩu/i).fill('123456')
+    await page.getByRole('button', { name: 'Đăng nhập' }).click()
+    await expect(page).toHaveURL(/.*chat/, { timeout: 10000 })
+
+    // 2. Cố tình gõ URL /dashboard trực tiếp
+    await page.goto(`${BASE_URL}/dashboard`)
+
+    // 3. Hệ thống phải chặn và đẩy ngược lại /chat
+    await expect(page).toHaveURL(/.*chat/, { timeout: 10000 })
+    await expect(page.getByRole('heading', { name: 'MES Admin Portal' })).not.toBeVisible()
+  })
 })

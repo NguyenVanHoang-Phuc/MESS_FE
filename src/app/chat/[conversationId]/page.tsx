@@ -1,6 +1,6 @@
 "use client"
 
-import { FormEvent, useEffect, useState, useRef, ChangeEvent, DragEvent, ClipboardEvent, useCallback } from "react"
+import { FormEvent, useEffect, useLayoutEffect, useState, useRef, ChangeEvent, DragEvent, ClipboardEvent, useCallback } from "react"
 import {
   AlertCircle,
   ArrowDown,
@@ -111,19 +111,27 @@ export default function ConversationPage() {
   const prevMessageCountRef = useRef(0)
   const lastMessageIdRef = useRef<string | null>(null)
   const isPrependingOlderRef = useRef(false)
+  const scrollSnapshotRef = useRef<{ prevScrollHeight: number; prevScrollTop: number } | null>(null)
+  const canLoadOlderRef = useRef(true)
   const [newMessageCount, setNewMessageCount] = useState(0)
 
   const visibleMessages = messages.filter((m) => !hiddenMessageIds.includes(m.id))
+
+  // Key each virtual item by unique message ID so prepend doesn't mix up height cache
+  const getItemKey = useCallback((index: number) => {
+    return visibleMessages[index]?.id ?? index
+  }, [visibleMessages])
 
   // Virtualized List (Windowing for high performance 60fps rendering)
   const rowVirtualizer = useVirtualizer({
     count: visibleMessages.length,
     getScrollElement: () => viewportRef.current,
-    estimateSize: () => 90,
-    overscan: 8,
+    estimateSize: () => 56,
+    getItemKey,
+    overscan: 12,
   })
 
-  // Safe measureElement ref callback to prevent React 18/19 flushSync inside lifecycle warning
+  // Safe measureElement callback avoiding React 18/19 flushSync inside lifecycle render warning
   const measureElementRef = useCallback(
     (node: HTMLDivElement | null) => {
       if (!node) return
@@ -433,25 +441,49 @@ export default function ConversationPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleMessages.length, loading, currentUser])
 
+  // Scroll Anchoring: Perfectly preserve scroll position when older messages are prepended
+  useLayoutEffect(() => {
+    if (!isPrependingOlderRef.current || !scrollSnapshotRef.current || !viewportRef.current) return
+
+    const { prevScrollHeight, prevScrollTop } = scrollSnapshotRef.current
+    const newScrollHeight = viewportRef.current.scrollHeight
+    const delta = newScrollHeight - prevScrollHeight
+
+    if (delta > 0) {
+      viewportRef.current.scrollTop = prevScrollTop + delta
+    }
+
+    scrollSnapshotRef.current = null
+
+    // Keep isPrependingOlderRef true for a short duration so auto-scroll effects don't fire
+    const timer = setTimeout(() => {
+      isPrependingOlderRef.current = false
+    }, 200)
+
+    return () => clearTimeout(timer)
+  }, [messages])
+
   // Load older historical messages on scroll up (Cursor Pagination with Perfect Anchoring)
   async function handleLoadOlderMessages() {
-    if (!conversationId || !hasMore || isLoadingOlder || !nextCursor) return
+    if (!conversationId || !hasMore || isLoadingOlder || !nextCursor || !canLoadOlderRef.current) return
     setIsLoadingOlder(true)
+    canLoadOlderRef.current = false
     isPrependingOlderRef.current = true
 
-    // Snapshot current scroll state and anchor index
-    const anchorIndex = rowVirtualizer.range?.startIndex ?? 0
-    const prevScrollHeight = viewportRef.current?.scrollHeight || 0
-    const prevScrollTop = viewportRef.current?.scrollTop || 0
+    // Snapshot exact scroll dimensions right before fetching
+    if (viewportRef.current) {
+      scrollSnapshotRef.current = {
+        prevScrollHeight: viewportRef.current.scrollHeight,
+        prevScrollTop: viewportRef.current.scrollTop,
+      }
+    }
 
     try {
       const res = await getMessages(conversationId, nextCursor, 30)
       if (res.items.length > 0) {
-        let newItemCount = 0
         setMessages((prev) => {
           const existingIds = new Set(prev.map((m) => m.id))
           const newItems = res.items.filter((m) => !existingIds.has(m.id))
-          newItemCount = newItems.length
           return [...newItems, ...prev]
         })
         setNextCursor(res.nextCursor || null)
@@ -477,12 +509,17 @@ export default function ConversationPage() {
       } else {
         setHasMore(false)
         isPrependingOlderRef.current = false
+        scrollSnapshotRef.current = null
       }
     } catch (err) {
       console.error("Failed to load older messages", err)
       isPrependingOlderRef.current = false
+      scrollSnapshotRef.current = null
     } finally {
       setIsLoadingOlder(false)
+      setTimeout(() => {
+        canLoadOlderRef.current = true
+      }, 500)
     }
   }
 
@@ -986,7 +1023,7 @@ export default function ConversationPage() {
               setIsAtBottom(atBottom)
               if (atBottom) setNewMessageCount(0)
               // Load older on scroll to top
-              if (target.scrollTop < 60 && hasMore && !isLoadingOlder) {
+              if (target.scrollTop < 80 && hasMore && !isLoadingOlder && canLoadOlderRef.current && !isPrependingOlderRef.current) {
                 handleLoadOlderMessages()
               }
             }}
@@ -1131,7 +1168,7 @@ export default function ConversationPage() {
 
                       return (
                         <div
-                          key={message.id || virtualRow.key}
+                          key={virtualRow.key}
                           data-index={virtualRow.index}
                           ref={measureElementRef}
                           style={{

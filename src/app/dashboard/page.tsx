@@ -47,6 +47,10 @@ import { ZaloBroadcastModal } from '@/components/zalo/zalo-broadcast-modal'
 import { ZaloPhoneSimulator } from '@/components/zalo/zalo-phone-simulator'
 import { ZaloNotificationLogItem } from '@/lib/zalo-api'
 import { logoutUser } from '@/services/api/auth'
+import { UserSettingsModal } from '@/components/settings/user-settings-modal'
+import { UserAvatar } from '@/components/chat/user-avatar'
+import { useTheme } from '@/context/theme-context'
+import { Sun, Moon, Palette } from 'lucide-react'
 
 export default function AdminDashboardPage() {
   const router = useRouter()
@@ -101,23 +105,53 @@ export default function AdminDashboardPage() {
   const [isZaloSimOpen, setIsZaloSimOpen] = useState(false)
   const [zaloLogs, setZaloLogs] = useState<ZaloNotificationLogItem[]>([])
 
-  // Load User & Check Auth
+  // User Settings Modal & Theme
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const [settingsTab, setSettingsTab] = useState<'avatar' | 'theme'>('avatar')
+  const { effectiveTheme, toggleTheme } = useTheme()
+
+  // Real-time listener for user profile / avatar updates
+  useEffect(() => {
+    const handleProfileUpdate = (e: Event) => {
+      const custom = e as CustomEvent<any>
+      if (custom.detail) {
+        setCurrentUser((prev: any) => ({ ...prev, ...custom.detail }))
+      }
+    }
+    window.addEventListener('user-profile-updated', handleProfileUpdate)
+    return () => window.removeEventListener('user-profile-updated', handleProfileUpdate)
+  }, [])
+
+  // Auth & Admin Guard
+  const [isAuthorized, setIsAuthorized] = useState<boolean | null>(null)
+
+  // Load User & Strict Admin Auth Guard
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const stored = localStorage.getItem('user')
       if (stored) {
         try {
           const userObj = JSON.parse(stored)
+          const role = (userObj?.roleName || '').toLowerCase().trim()
+          if (role !== 'admin') {
+            setIsAuthorized(false)
+            router.replace('/chat')
+            return
+          }
           setCurrentUser(userObj)
-          // Optional: If user is not admin, they can still view or be guided
-        } catch {}
+          setIsAuthorized(true)
+        } catch {
+          setIsAuthorized(false)
+          router.replace('/login')
+        }
       } else {
-        router.push('/login')
+        setIsAuthorized(false)
+        router.replace('/login')
       }
     }
   }, [router])
 
-  // Load Dashboard Data
+  // Load Dashboard Data only when authorized
   const loadData = async () => {
     setLoading(true)
     try {
@@ -142,8 +176,10 @@ export default function AdminDashboardPage() {
   }
 
   useEffect(() => {
-    loadData()
-  }, [])
+    if (isAuthorized) {
+      loadData()
+    }
+  }, [isAuthorized])
 
   // Handle Sync All Org Groups
   const handleSyncGroups = async () => {
@@ -277,6 +313,23 @@ export default function AdminDashboardPage() {
     return matchSearch && matchDept && matchShift && matchRole
   })
 
+  // Prevent unauthorized view flicker
+  if (isAuthorized === null || isAuthorized === false) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4">
+        <div className="flex flex-col items-center gap-3 text-center animate-in fade-in duration-200">
+          <div className="flex size-12 items-center justify-center rounded-2xl bg-primary/10 text-primary border border-primary/20 shadow-xs">
+            <Loader2 className="size-6 animate-spin" />
+          </div>
+          <div>
+            <h2 className="text-sm font-bold text-foreground">Đang xác thực quyền Quản trị viên...</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">Hệ thống đang kiểm tra quyền truy cập MES Admin Portal.</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
       {/* Top Navbar */}
@@ -319,6 +372,30 @@ export default function AdminDashboardPage() {
             <span className="hidden sm:inline">{isSyncing ? 'Đang đồng bộ...' : 'Đồng bộ nhóm chat'}</span>
           </button>
 
+          {/* Theme Quick Toggle & Palette */}
+          <button
+            type="button"
+            onClick={toggleTheme}
+            className="flex items-center justify-center size-9 rounded-xl border border-border bg-background text-muted-foreground hover:text-foreground hover:bg-muted transition cursor-pointer shadow-xs"
+            title={effectiveTheme === 'dark' ? 'Chuyển sang Chế độ Sáng' : 'Chuyển sang Chế độ Tối'}
+            aria-label="Đổi chế độ Sáng / Tối"
+          >
+            {effectiveTheme === 'dark' ? <Sun className="size-4 text-amber-400" /> : <Moon className="size-4 text-indigo-500" />}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setSettingsTab('theme')
+              setIsSettingsOpen(true)
+            }}
+            className="flex items-center justify-center size-9 rounded-xl border border-border bg-background text-muted-foreground hover:text-primary hover:bg-primary/10 transition cursor-pointer shadow-xs"
+            title="Cài đặt Giao diện & Tông màu"
+            aria-label="Cài đặt Giao diện"
+          >
+            <Palette className="size-4" />
+          </button>
+
           {/* Quick link to Chat app */}
           <Link
             href="/chat"
@@ -331,15 +408,31 @@ export default function AdminDashboardPage() {
 
           {/* User Profile & Logout */}
           <div className="flex items-center gap-2.5 pl-2 border-l border-border">
-            <div className="flex size-9 items-center justify-center rounded-full bg-primary/15 text-xs font-bold text-primary border border-primary/20 shrink-0">
-              {currentUser?.fullName ? currentUser.fullName.substring(0, 2).toUpperCase() : 'AD'}
-            </div>
-            <div className="hidden lg:block text-left">
-              <p className="text-xs font-bold leading-tight truncate max-w-[120px] text-foreground">
-                {currentUser?.fullName || 'Quản trị viên'}
-              </p>
-              <p className="text-[10px] text-muted-foreground leading-tight">Admin Portal</p>
-            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setSettingsTab('avatar')
+                setIsSettingsOpen(true)
+              }}
+              className="flex items-center gap-2.5 text-left cursor-pointer group hover:opacity-80 transition"
+              title="Nhấn để đổi Ảnh đại diện & Cài đặt hồ sơ"
+            >
+              <UserAvatar
+                src={currentUser?.avatarUrl}
+                name={currentUser?.fullName}
+                emoji={currentUser?.avatarEmoji}
+                gradient={currentUser?.avatarBg}
+                size="sm"
+                isOnline={true}
+                className="transition group-hover:scale-105"
+              />
+              <div className="hidden lg:block text-left">
+                <p className="text-xs font-bold leading-tight truncate max-w-[120px] text-foreground group-hover:text-primary transition">
+                  {currentUser?.fullName || 'Quản trị viên'}
+                </p>
+                <p className="text-[10px] text-muted-foreground leading-tight">Admin Portal</p>
+              </div>
+            </button>
             <button
               onClick={() => {
                 logoutUser()
@@ -1149,6 +1242,13 @@ export default function AdminDashboardPage() {
         isOpen={isZaloSimOpen}
         onClose={() => setIsZaloSimOpen(false)}
         notifications={zaloLogs}
+      />
+
+      {/* User Settings & Avatar/Theme Modal */}
+      <UserSettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        initialTab={settingsTab}
       />
     </div>
   )

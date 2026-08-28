@@ -32,6 +32,9 @@ import {
   Settings,
   ShieldCheck,
   Smartphone,
+  Sun,
+  Moon,
+  Palette,
   Trash2,
   UserCheck,
   UserMinus,
@@ -57,6 +60,10 @@ import { ZaloPhoneSimulator } from "@/components/zalo/zalo-phone-simulator"
 import type { ZaloNotificationLogItem } from "@/lib/zalo-api"
 import { Button } from "@/components/ui/button"
 import type { AttachmentResponse, ConversationResponse, ParticipantResponse, UserSummaryResponse } from "@/types/chat"
+import type { UserProfile } from "@/types/auth"
+import { UserSettingsModal } from "@/components/settings/user-settings-modal"
+import { UserAvatar } from "@/components/chat/user-avatar"
+import { useTheme } from "@/context/theme-context"
 
 export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
   const params = useParams()
@@ -87,6 +94,23 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
   const [isZaloBroadcastOpen, setIsZaloBroadcastOpen] = useState(false)
   const [isZaloSimOpen, setIsZaloSimOpen] = useState(false)
   const [zaloLogs, setZaloLogs] = useState<ZaloNotificationLogItem[]>([])
+
+  // User Settings Modal & Theme
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const [settingsTab, setSettingsTab] = useState<"avatar" | "theme">("avatar")
+  const { effectiveTheme, toggleTheme } = useTheme()
+
+  // Real-time listener for user profile / avatar updates
+  useEffect(() => {
+    const handleProfileUpdate = (e: Event) => {
+      const custom = e as CustomEvent<UserProfile>
+      if (custom.detail) {
+        setCurrentUser((prev: any) => ({ ...prev, ...custom.detail }))
+      }
+    }
+    window.addEventListener("user-profile-updated", handleProfileUpdate)
+    return () => window.removeEventListener("user-profile-updated", handleProfileUpdate)
+  }, [])
 
   // On desktop xl: screens (>= 1280px), show details panel by default
   useEffect(() => {
@@ -554,6 +578,13 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
         initialConversationId={conversationId}
       />
 
+      {/* User Settings Modal (Avatar & Theme) */}
+      <UserSettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        initialTab={settingsTab}
+      />
+
       {/* Create Group Modal */}
       <CreateGroupModal
         isOpen={isCreateGroupOpen}
@@ -991,7 +1022,7 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
           )}
         </div>
 
-        {/* User Profile Bar & Admin Shortcut */}
+        {/* User Profile Bar & Settings */}
         <div className="border-t p-3 bg-card space-y-2">
           {currentUser?.roleName?.toLowerCase() === "admin" && (
             <Link
@@ -1003,16 +1034,58 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
             </Link>
           )}
 
-          <div className="flex items-center gap-3 rounded-xl p-1.5 hover:bg-muted/50 transition">
-            <div className="flex size-8 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
-              {currentUser?.fullName ? currentUser.fullName.substring(0, 2).toUpperCase() : "AN"}
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-xs font-medium">{currentUser?.fullName || "Anh Nguyễn"}</p>
-              <p className="text-[10px] text-muted-foreground">
-                {currentUser?.roleName === "Admin" ? "Quản trị viên" : currentUser?.departmentName || "Đang hoạt động"}
-              </p>
-            </div>
+          <div className="flex items-center gap-2 rounded-xl p-1.5 hover:bg-muted/50 transition">
+            <button
+              type="button"
+              onClick={() => {
+                setSettingsTab("avatar")
+                setIsSettingsOpen(true)
+              }}
+              className="flex items-center gap-2.5 min-w-0 flex-1 text-left cursor-pointer group"
+              title="Nhấn để đổi Ảnh đại diện & Cài đặt hồ sơ"
+            >
+              <div className="relative">
+                <UserAvatar
+                  src={currentUser?.avatarUrl}
+                  name={currentUser?.fullName}
+                  emoji={currentUser?.avatarEmoji}
+                  gradient={currentUser?.avatarBg}
+                  size="sm"
+                  isOnline={true}
+                  className="transition group-hover:scale-105"
+                />
+              </div>
+              <div className="min-w-0 flex-1">
+                <span className="truncate block text-xs font-semibold group-hover:text-primary transition">{currentUser?.fullName || "Người dùng"}</span>
+                <span className="text-[10px] text-muted-foreground block truncate">
+                  {currentUser?.roleName === "Admin" ? "Quản trị viên" : currentUser?.departmentName || "Đang hoạt động"}
+                </span>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setSettingsTab("theme")
+                setIsSettingsOpen(true)
+              }}
+              title="Cài đặt Giao diện & Tông màu"
+              aria-label="Cài đặt Giao diện"
+              className="text-muted-foreground hover:text-primary hover:bg-primary/10 p-1.5 rounded-lg transition cursor-pointer"
+            >
+              <Palette className="size-4" />
+            </button>
+
+            <button
+              type="button"
+              onClick={toggleTheme}
+              title={effectiveTheme === "dark" ? "Chuyển sang Chế độ Sáng" : "Chuyển sang Chế độ Tối"}
+              aria-label="Chuyển đổi giao diện Sáng / Tối"
+              className="text-muted-foreground hover:text-foreground hover:bg-muted p-1.5 rounded-lg transition cursor-pointer"
+            >
+              {effectiveTheme === "dark" ? <Sun className="size-4 text-amber-400" /> : <Moon className="size-4 text-indigo-500" />}
+            </button>
+
             {currentUser?.roleName?.toLowerCase() === "admin" && (
               <Link
                 href="/dashboard"
@@ -1023,6 +1096,7 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
                 <LayoutDashboard className="size-4" />
               </Link>
             )}
+
             <button
               onClick={() => {
                 logoutUser()
@@ -1030,7 +1104,7 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
               }}
               title="Đăng xuất"
               aria-label="Đăng xuất"
-              className="text-muted-foreground hover:text-destructive p-1 rounded transition"
+              className="text-muted-foreground hover:text-destructive hover:bg-destructive/10 p-1.5 rounded-lg transition cursor-pointer"
             >
               <LogOut className="size-4" />
             </button>
@@ -1150,8 +1224,29 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
               <Info className="size-4" />
             </button>
             <button
+              type="button"
+              onClick={toggleTheme}
+              className="rounded-lg p-2 text-muted-foreground hover:bg-accent hover:text-foreground transition cursor-pointer"
+              aria-label="Đổi chế độ Sáng / Tối"
+              title={effectiveTheme === "dark" ? "Chuyển sang Chế độ Sáng" : "Chuyển sang Chế độ Tối"}
+            >
+              {effectiveTheme === "dark" ? <Sun className="size-4 text-amber-400" /> : <Moon className="size-4 text-indigo-500" />}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSettingsTab("theme")
+                setIsSettingsOpen(true)
+              }}
+              className="rounded-lg p-2 text-muted-foreground hover:bg-accent hover:text-foreground transition cursor-pointer"
+              aria-label="Cài đặt giao diện & avatar"
+              title="Cài đặt Avatar & Theme"
+            >
+              <Palette className="size-4" />
+            </button>
+            <button
               onClick={() => setIsCreateGroupOpen(true)}
-              className="rounded-lg p-2 text-muted-foreground hover:bg-accent hover:text-foreground"
+              className="rounded-lg p-2 text-muted-foreground hover:bg-accent hover:text-foreground cursor-pointer"
               aria-label="Tạo nhóm mới"
               title="Tạo nhóm mới"
             >
