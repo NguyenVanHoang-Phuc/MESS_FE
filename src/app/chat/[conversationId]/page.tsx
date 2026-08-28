@@ -488,24 +488,6 @@ export default function ConversationPage() {
         })
         setNextCursor(res.nextCursor || null)
         setHasMore(res.hasMore)
-
-        // Seamlessly maintain scroll position without any jumping
-        requestAnimationFrame(() => {
-          if (viewportRef.current) {
-            const newScrollHeight = viewportRef.current.scrollHeight
-            const heightDiff = newScrollHeight - prevScrollHeight
-            if (heightDiff > 0) {
-              viewportRef.current.scrollTop = prevScrollTop + heightDiff
-            }
-          }
-          rowVirtualizer.scrollToIndex(anchorIndex + newItemCount, {
-            align: 'start',
-            behavior: 'auto',
-          })
-          setTimeout(() => {
-            isPrependingOlderRef.current = false
-          }, 200)
-        })
       } else {
         setHasMore(false)
         isPrependingOlderRef.current = false
