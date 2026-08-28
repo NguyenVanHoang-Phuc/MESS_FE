@@ -1294,22 +1294,20 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
       )}
 
       {/* Right Details Sidebar */}
-      {selectedInfo && (
+      {showDetails && selectedInfo && (
         <aside
           className={cn(
-            "w-[310px] max-w-[85vw] shrink-0 border-l bg-card flex flex-col overflow-y-auto transition-all duration-300 z-50",
-            "xl:relative xl:flex xl:translate-x-0",
-            showDetails
-              ? "fixed inset-y-0 right-0 flex translate-x-0 shadow-2xl animate-in slide-in-from-right duration-200"
-              : "hidden xl:flex"
+            "w-[310px] max-w-[85vw] shrink-0 border-l bg-card flex flex-col overflow-y-auto z-40",
+            "fixed inset-y-0 right-0 shadow-2xl animate-in slide-in-from-right duration-200 xl:static xl:shadow-none xl:animate-none"
           )}
         >
           <div className="flex h-[73px] items-center justify-between border-b px-5">
             <h3 className="font-semibold text-sm">Chi tiết cuộc trò chuyện</h3>
             <button
               onClick={() => setShowDetails(false)}
-              className="rounded-lg p-2 text-muted-foreground hover:bg-accent hover:text-foreground"
+              className="rounded-lg p-2 text-muted-foreground hover:bg-accent hover:text-foreground cursor-pointer transition"
               aria-label="Đóng chi tiết"
+              title="Đóng chi tiết cuộc trò chuyện"
             >
               <X className="size-4" />
             </button>

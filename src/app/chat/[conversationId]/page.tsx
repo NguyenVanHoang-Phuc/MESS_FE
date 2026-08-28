@@ -29,7 +29,7 @@ import {
   X,
   ZoomIn,
 } from "lucide-react"
-import { useParams } from "next/navigation"
+import { useParams, useSearchParams } from "next/navigation"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { Button } from "@/components/ui/button"
 import { Message, MessageAvatar, MessageContent, MessageGroup } from "@/components/ui/message"
@@ -59,6 +59,10 @@ interface SelectedFileItem {
 
 export default function ConversationPage() {
   const { conversationId } = useParams<{ conversationId: string }>()
+  const searchParams = useSearchParams()
+  const targetMsgId = searchParams ? searchParams.get("msgId") : null
+  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null)
+
   const [messages, setMessages] = useState<MessageResponse[]>([])
   const [draft, setDraft] = useState("")
   const [loading, setLoading] = useState(true)
@@ -351,13 +355,14 @@ export default function ConversationPage() {
       if (!conversationId) return
       setLoading(true)
       setNewMessageCount(0)
-      setIsAtBottom(true)
-      isAtBottomRef.current = true
+      setIsAtBottom(!targetMsgId)
+      isAtBottomRef.current = !targetMsgId
       isPrependingOlderRef.current = false
 
       try {
+        const initialLimit = targetMsgId ? 100 : 30
         const [msgRes, convRes, taskList] = await Promise.all([
-          getMessages(conversationId, null, 30),
+          getMessages(conversationId, null, initialLimit),
           getConversationById(conversationId),
           getTasksApi({ conversationId }),
         ])
@@ -370,15 +375,25 @@ export default function ConversationPage() {
         if (convRes) setConversationDetails(convRes)
         setTasks(taskList)
 
-        // Initial scroll to bottom
-        setTimeout(() => {
-          if (viewportRef.current) {
-            viewportRef.current.scrollTop = viewportRef.current.scrollHeight
-          }
-          if (msgRes.items.length > 0) {
-            rowVirtualizer.scrollToIndex(msgRes.items.length - 1, { align: 'end', behavior: 'auto' })
-          }
-        }, 50)
+        // Scroll handling: if searching for specific message, scroll to it; else scroll to bottom
+        if (targetMsgId) {
+          setTimeout(() => {
+            const idx = msgRes.items.findIndex((m) => m.id === targetMsgId)
+            if (idx !== -1) {
+              rowVirtualizer.scrollToIndex(idx, { align: "center", behavior: "smooth" })
+              setHighlightedMessageId(targetMsgId)
+            }
+          }, 150)
+        } else {
+          setTimeout(() => {
+            if (viewportRef.current) {
+              viewportRef.current.scrollTop = viewportRef.current.scrollHeight
+            }
+            if (msgRes.items.length > 0) {
+              rowVirtualizer.scrollToIndex(msgRes.items.length - 1, { align: "end", behavior: "auto" })
+            }
+          }, 50)
+        }
       } catch (err) {
         console.warn("Failed to load conversation details / tasks:", err)
       } finally {
@@ -386,7 +401,49 @@ export default function ConversationPage() {
       }
     }
     load()
-  }, [conversationId])
+  }, [conversationId, targetMsgId])
+
+  // Listen for custom scroll-to-message event (when selecting search result inside already open conversation)
+  useEffect(() => {
+    function handleScrollEvent(e: Event) {
+      const customEvent = e as CustomEvent<{ messageId: string; conversationId: string }>
+      if (customEvent.detail?.conversationId === conversationId && customEvent.detail?.messageId) {
+        const msgId = customEvent.detail.messageId
+        setHighlightedMessageId(msgId)
+        const idx = visibleMessages.findIndex((m) => m.id === msgId)
+        if (idx !== -1) {
+          rowVirtualizer.scrollToIndex(idx, { align: "center", behavior: "smooth" })
+        }
+        setTimeout(() => {
+          setHighlightedMessageId((curr) => (curr === msgId ? null : curr))
+        }, 4000)
+      }
+    }
+
+    window.addEventListener("scroll-to-message", handleScrollEvent)
+    return () => {
+      window.removeEventListener("scroll-to-message", handleScrollEvent)
+    }
+  }, [conversationId, visibleMessages, rowVirtualizer])
+
+  // Also react to targetMsgId query param if changed
+  useEffect(() => {
+    if (!targetMsgId || loading) return
+    setHighlightedMessageId(targetMsgId)
+    const idx = visibleMessages.findIndex((m) => m.id === targetMsgId)
+    if (idx !== -1) {
+      const t1 = setTimeout(() => {
+        rowVirtualizer.scrollToIndex(idx, { align: "center", behavior: "smooth" })
+      }, 150)
+      const t2 = setTimeout(() => {
+        setHighlightedMessageId((curr) => (curr === targetMsgId ? null : curr))
+      }, 4000)
+      return () => {
+        clearTimeout(t1)
+        clearTimeout(t2)
+      }
+    }
+  }, [targetMsgId, loading, visibleMessages, rowVirtualizer])
 
   // Auto-scroll to bottom ONLY when a NEW message is appended to the bottom
   useEffect(() => {
@@ -1081,7 +1138,16 @@ export default function ConversationPage() {
                         )
                       })()
 
-                      // Consecutive message grouping (no time limit - all consecutive messages from same sender)
+                      // Consecutive message grouping:
+                      // Check if same sender as previous message
+                      const isSameSenderAsPrev = Boolean(
+                        prevMessage &&
+                        !showDateSeparator &&
+                        ((message.senderId && prevMessage.senderId && message.senderId === prevMessage.senderId) ||
+                          (message.senderName && prevMessage.senderName && message.senderName === prevMessage.senderName))
+                      )
+
+                      // Check if same sender as next message
                       const isSameSenderAsNext = Boolean(
                         nextMessage &&
                         ((message.senderId && nextMessage.senderId && message.senderId === nextMessage.senderId) ||
@@ -1098,6 +1164,9 @@ export default function ConversationPage() {
                           curr.getDate() !== next.getDate()
                         )
                       })()
+
+                      // isFirstInGroup: True if this is the start of a consecutive message block from this sender
+                      const isFirstInGroup = !isSameSenderAsPrev
 
                       // isLastInGroup: True if this is the last consecutive message from this sender before someone else talks or date changes
                       const isLastInGroup = !isSameSenderAsNext || nextHasDateSeparator
@@ -1174,22 +1243,22 @@ export default function ConversationPage() {
 
                           <Message
                             align={isOwn ? "end" : "start"}
-                            className={cn("relative", isLastInGroup ? "mb-4" : "mb-1")}
+                            className={cn("relative", isLastInGroup ? "mb-3.5" : "mb-1")}
                           >
-                            {isLastInGroup ? (
-                              <MessageAvatar className="size-8 border bg-card text-xs font-semibold shrink-0">
-                                <span className="sr-only">{isOwn ? "Bạn" : message.senderName}</span>
-                                {isOwn
-                                  ? (currentUser?.fullName ? currentUser.fullName.substring(0, 2).toUpperCase() : "AN")
-                                  : (message.senderName ? message.senderName.substring(0, 2).toUpperCase() : <User className="size-4" />)}
-                              </MessageAvatar>
-                            ) : (
-                              <div className="size-8 shrink-0" aria-hidden="true" />
+                            {!isOwn && (
+                              isFirstInGroup ? (
+                                <MessageAvatar className="size-8 border bg-card text-xs font-semibold shrink-0">
+                                  <span className="sr-only">{message.senderName}</span>
+                                  {message.senderName ? message.senderName.substring(0, 2).toUpperCase() : <User className="size-4" />}
+                                </MessageAvatar>
+                              ) : (
+                                <div className="size-8 shrink-0" aria-hidden="true" />
+                              )
                             )}
                             <div className={isOwn ? "flex flex-col items-end max-w-[80%] relative" : "flex flex-col items-start max-w-[80%] relative"}>
-                              {isLastInGroup && (
+                              {isFirstInGroup && (
                                 <div className="mb-1 flex items-center gap-1.5 px-1 text-[11px] text-muted-foreground">
-                                  <span className="font-medium">{isOwn ? "Bạn" : message.senderName}</span>
+                                  <span className="font-medium text-foreground/80">{isOwn ? "Bạn" : message.senderName}</span>
                                   {timeStr && <span>{timeStr}</span>}
 
                                   {/* Message Status Tick (For sender) */}
@@ -1302,15 +1371,18 @@ export default function ConversationPage() {
 
                                   {(() => {
                                     const isOnlyMedia = (!message.content || message.content.trim() === '') && docAttachments.length === 0 && (imageAttachments.length > 0 || videoAttachments.length > 0)
+                                    const isHighlighted = message.id === highlightedMessageId
                                     return (
                                       <MessageContent
                                         className={cn(
-                                          "flex flex-col gap-2 transition",
+                                          "flex flex-col gap-2 transition-all duration-500",
                                           isOnlyMedia
                                             ? "p-0 bg-transparent border-0 shadow-none"
                                             : isOwn
                                               ? "p-3 shadow-sm rounded-2xl rounded-tr-sm bg-primary text-primary-foreground"
-                                              : "p-3 shadow-sm rounded-2xl rounded-tl-sm border bg-card text-card-foreground"
+                                              : "p-3 shadow-sm rounded-2xl rounded-tl-sm border bg-card text-card-foreground",
+                                          isHighlighted &&
+                                            "ring-4 ring-amber-400/90 dark:ring-amber-500/90 ring-offset-2 ring-offset-background bg-amber-500/20 dark:bg-amber-500/25 shadow-xl scale-[1.03] animate-pulse"
                                         )}
                                       >
                                         {/* Text content if present */}
