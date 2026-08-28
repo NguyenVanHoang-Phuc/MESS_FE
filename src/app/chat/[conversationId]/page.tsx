@@ -1,6 +1,6 @@
 "use client"
 
-import { FormEvent, useEffect, useState, useRef, ChangeEvent, DragEvent, ClipboardEvent, useCallback } from "react"
+import { FormEvent, useEffect, useLayoutEffect, useState, useRef, ChangeEvent, DragEvent, ClipboardEvent, useCallback } from "react"
 import {
   AlertCircle,
   ArrowDown,
@@ -82,19 +82,31 @@ export default function ConversationPage() {
   const [isLoadingOlder, setIsLoadingOlder] = useState<boolean>(false)
   const viewportRef = useRef<HTMLDivElement>(null)
   const [isAtBottom, setIsAtBottom] = useState(true)
+  const isAtBottomRef = useRef(true)
+  const prevMessageCountRef = useRef(0)
+  const lastMessageIdRef = useRef<string | null>(null)
+  const isPrependingOlderRef = useRef(false)
+  const scrollSnapshotRef = useRef<{ prevScrollHeight: number; prevScrollTop: number } | null>(null)
+  const canLoadOlderRef = useRef(true)
   const [newMessageCount, setNewMessageCount] = useState(0)
 
   const visibleMessages = messages.filter((m) => !hiddenMessageIds.includes(m.id))
+
+  // Key each virtual item by unique message ID so prepend doesn't mix up height cache
+  const getItemKey = useCallback((index: number) => {
+    return visibleMessages[index]?.id ?? index
+  }, [visibleMessages])
 
   // Virtualized List (Windowing for high performance 60fps rendering)
   const rowVirtualizer = useVirtualizer({
     count: visibleMessages.length,
     getScrollElement: () => viewportRef.current,
-    estimateSize: () => 90,
-    overscan: 8,
+    estimateSize: () => 56,
+    getItemKey,
+    overscan: 12,
   })
 
-  // Safe measureElement ref callback to prevent React 18/19 flushSync inside lifecycle warning
+  // Safe measureElement callback avoiding React 18/19 flushSync inside lifecycle render warning
   const measureElementRef = useCallback(
     (node: HTMLDivElement | null) => {
       if (!node) return
@@ -299,44 +311,120 @@ export default function ConversationPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [incomingMessage])
 
-  // Load older historical messages on scroll up (Cursor Pagination)
-  async function handleLoadOlderMessages() {
-    if (!conversationId || !hasMore || isLoadingOlder || !nextCursor) return
-    setIsLoadingOlder(true)
+  // Auto-scroll to bottom ONLY when a NEW message is appended to the bottom
+  useEffect(() => {
+    if (loading || visibleMessages.length === 0) return
 
-    // Snapshot: which item index was at the top of the visible area right now
-    const anchorIndex = rowVirtualizer.range?.startIndex ?? 0
+    // If we are currently prepending older historical messages, NEVER scroll to bottom!
+    if (isPrependingOlderRef.current) {
+      prevMessageCountRef.current = visibleMessages.length
+      return
+    }
+
+    const lastMessage = visibleMessages[visibleMessages.length - 1]
+    const isLastMessageNew = Boolean(lastMessage && lastMessage.id !== lastMessageIdRef.current)
+
+    // Only trigger bottom scroll if a NEW message was actually appended to the bottom
+    if (isLastMessageNew) {
+      lastMessageIdRef.current = lastMessage.id
+      prevMessageCountRef.current = visibleMessages.length
+
+      const isOwnMessage =
+        Boolean(currentUser?.userId && lastMessage.senderId === currentUser.userId) ||
+        lastMessage.senderName === "Tôi" ||
+        lastMessage.senderName === currentUser?.fullName
+
+      if (isAtBottomRef.current || isOwnMessage) {
+        const t1 = setTimeout(() => {
+          if (viewportRef.current) {
+            viewportRef.current.scrollTop = viewportRef.current.scrollHeight
+          }
+          if (visibleMessages.length > 0) {
+            rowVirtualizer.scrollToIndex(visibleMessages.length - 1, { align: 'end', behavior: 'smooth' })
+          }
+          setIsAtBottom(true)
+          isAtBottomRef.current = true
+          setNewMessageCount(0)
+        }, 30)
+
+        const t2 = setTimeout(() => {
+          if (viewportRef.current) {
+            viewportRef.current.scrollTop = viewportRef.current.scrollHeight
+          }
+        }, 100)
+
+        return () => {
+          clearTimeout(t1)
+          clearTimeout(t2)
+        }
+      } else {
+        setNewMessageCount((c) => c + 1)
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleMessages.length, loading, currentUser])
+
+  // Scroll Anchoring: Perfectly preserve scroll position when older messages are prepended
+  useLayoutEffect(() => {
+    if (!isPrependingOlderRef.current || !scrollSnapshotRef.current || !viewportRef.current) return
+
+    const { prevScrollHeight, prevScrollTop } = scrollSnapshotRef.current
+    const newScrollHeight = viewportRef.current.scrollHeight
+    const delta = newScrollHeight - prevScrollHeight
+
+    if (delta > 0) {
+      viewportRef.current.scrollTop = prevScrollTop + delta
+    }
+
+    scrollSnapshotRef.current = null
+
+    // Keep isPrependingOlderRef true for a short duration so auto-scroll effects don't fire
+    const timer = setTimeout(() => {
+      isPrependingOlderRef.current = false
+    }, 200)
+
+    return () => clearTimeout(timer)
+  }, [messages])
+
+  // Load older historical messages on scroll up (Cursor Pagination with Perfect Anchoring)
+  async function handleLoadOlderMessages() {
+    if (!conversationId || !hasMore || isLoadingOlder || !nextCursor || !canLoadOlderRef.current) return
+    setIsLoadingOlder(true)
+    canLoadOlderRef.current = false
+    isPrependingOlderRef.current = true
+
+    // Snapshot exact scroll dimensions right before fetching
+    if (viewportRef.current) {
+      scrollSnapshotRef.current = {
+        prevScrollHeight: viewportRef.current.scrollHeight,
+        prevScrollTop: viewportRef.current.scrollTop,
+      }
+    }
 
     try {
       const res = await getMessages(conversationId, nextCursor, 30)
       if (res.items.length > 0) {
-        // Calculate deduplicated new items BEFORE updating state
-        // so we know exactly how many items will be prepended
-        let newItemCount = 0
         setMessages((prev) => {
           const existingIds = new Set(prev.map((m) => m.id))
           const newItems = res.items.filter((m) => !existingIds.has(m.id))
-          newItemCount = newItems.length
           return [...newItems, ...prev]
         })
         setNextCursor(res.nextCursor || null)
         setHasMore(res.hasMore)
-
-        // After React flushes the new items, restore scroll so the previously-visible
-        // item is still at the same position (pin anchor = anchorIndex + newItemCount)
-        requestAnimationFrame(() => {
-          rowVirtualizer.scrollToIndex(anchorIndex + newItemCount, {
-            align: 'start',
-            behavior: 'auto',
-          })
-        })
       } else {
         setHasMore(false)
+        isPrependingOlderRef.current = false
+        scrollSnapshotRef.current = null
       }
     } catch (err) {
       console.error("Failed to load older messages", err)
+      isPrependingOlderRef.current = false
+      scrollSnapshotRef.current = null
     } finally {
       setIsLoadingOlder(false)
+      setTimeout(() => {
+        canLoadOlderRef.current = true
+      }, 500)
     }
   }
 
@@ -783,7 +871,7 @@ export default function ConversationPage() {
               setIsAtBottom(atBottom)
               if (atBottom) setNewMessageCount(0)
               // Load older on scroll to top
-              if (target.scrollTop < 60 && hasMore && !isLoadingOlder) {
+              if (target.scrollTop < 80 && hasMore && !isLoadingOlder && canLoadOlderRef.current && !isPrependingOlderRef.current) {
                 handleLoadOlderMessages()
               }
             }}
@@ -928,7 +1016,7 @@ export default function ConversationPage() {
 
                       return (
                         <div
-                          key={message.id || virtualRow.key}
+                          key={virtualRow.key}
                           data-index={virtualRow.index}
                           ref={measureElementRef}
                           style={{

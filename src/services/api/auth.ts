@@ -128,9 +128,27 @@ export function getCurrentUser(): UserProfile | null {
   }
 }
 
+export function updateCurrentUser(updates: Partial<UserProfile>): UserProfile | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const current = getCurrentUser()
+    if (!current) return null
+    const updated: UserProfile = {
+      ...current,
+      ...updates,
+    }
+    localStorage.setItem('user', JSON.stringify(updated))
+    window.dispatchEvent(new CustomEvent('user-profile-updated', { detail: updated }))
+    return updated
+  } catch {
+    return null
+  }
+}
+
 export function logoutUser(): void {
   if (typeof window !== 'undefined') {
     localStorage.removeItem('token')
     localStorage.removeItem('user')
   }
 }
+

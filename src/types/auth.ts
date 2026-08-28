@@ -10,6 +10,10 @@ export interface LoginResponse {
   fullName: string
   roleName?: string
   departmentName?: string
+  avatarUrl?: string
+  avatarBg?: string
+  avatarEmoji?: string
+  email?: string
 }
 
 export interface UserProfile {
@@ -18,6 +22,10 @@ export interface UserProfile {
   fullName: string
   roleName?: string
   departmentName?: string
+  avatarUrl?: string
+  avatarBg?: string
+  avatarEmoji?: string
+  email?: string
 }
 
 export interface SendOtpRequest {
