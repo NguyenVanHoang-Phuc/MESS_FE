@@ -1,6 +1,18 @@
 import { useEffect, useState, useCallback } from 'react'
 import { signalRService } from '@/lib/signalr'
-import type { ConversationResponse, MessageRecalledEvent, MessageReactionEvent, MessageResponse, MessagesReadEvent, UserTypingEvent } from '@/types/chat'
+import type {
+  ConversationResponse,
+  MessageRecalledEvent,
+  MessageReactionEvent,
+  MessageResponse,
+  MessagesReadEvent,
+  UserTypingEvent,
+  IncomingCallEvent,
+  CallAcceptedEvent,
+  CallRejectedEvent,
+  CallEndedEvent,
+  ReceiveSignalEvent,
+} from '@/types/chat'
 import type { TaskResponse } from '@/types/task'
 
 export function useSignalR(conversationId?: string | null) {
@@ -17,6 +29,13 @@ export function useSignalR(conversationId?: string | null) {
   const [taskUpdatedEvent, setTaskUpdatedEvent] = useState<TaskResponse | null>(null)
   const [taskDeletedEvent, setTaskDeletedEvent] = useState<{ taskId: string; conversationId?: string } | null>(null)
   const [taskReminderEvent, setTaskReminderEvent] = useState<any | null>(null)
+
+  // WebRTC Calling Signal States
+  const [incomingCallEvent, setIncomingCallEvent] = useState<IncomingCallEvent | null>(null)
+  const [callAcceptedEvent, setCallAcceptedEvent] = useState<CallAcceptedEvent | null>(null)
+  const [callRejectedEvent, setCallRejectedEvent] = useState<CallRejectedEvent | null>(null)
+  const [callEndedEvent, setCallEndedEvent] = useState<CallEndedEvent | null>(null)
+  const [receiveSignalEvent, setReceiveSignalEvent] = useState<ReceiveSignalEvent | null>(null)
 
   useEffect(() => {
     const connection = signalRService.getConnection()
@@ -146,6 +165,54 @@ export function useSignalR(conversationId?: string | null) {
       })
     }
 
+    // WebRTC Calling Signal Handlers
+    const handleIncomingCall = (c: any) => {
+      console.log('SignalR: Received incoming call event:', c)
+      setIncomingCallEvent({
+        conversationId: c.conversationId || c.ConversationId,
+        callerId: c.callerId || c.CallerId,
+        callerName: c.callerName || c.CallerName,
+        isVideo: c.isVideo ?? c.IsVideo ?? true,
+        startedAt: c.startedAt || c.StartedAt || new Date().toISOString(),
+      })
+    }
+
+    const handleCallAccepted = (c: any) => {
+      console.log('SignalR: Call accepted event:', c)
+      setCallAcceptedEvent({
+        conversationId: c.conversationId || c.ConversationId,
+        responderId: c.responderId || c.ResponderId,
+        responderName: c.responderName || c.ResponderName,
+      })
+    }
+
+    const handleCallRejected = (c: any) => {
+      console.log('SignalR: Call rejected event:', c)
+      setIncomingCallEvent(null)
+      setCallRejectedEvent({
+        conversationId: c.conversationId || c.ConversationId,
+        userId: c.userId || c.UserId,
+        reason: c.reason || c.Reason,
+      })
+    }
+
+    const handleCallEnded = (c: any) => {
+      console.log('SignalR: Call ended event:', c)
+      setIncomingCallEvent(null)
+      setCallEndedEvent({
+        conversationId: c.conversationId || c.ConversationId,
+        userId: c.userId || c.UserId,
+      })
+    }
+
+    const handleReceiveSignal = (s: any) => {
+      setReceiveSignalEvent({
+        conversationId: s.conversationId || s.ConversationId,
+        senderId: s.senderId || s.SenderId,
+        signalData: s.signalData || s.SignalData,
+      })
+    }
+
     connection.on('ReceiveOnlineUsers', handleOnlineUsers)
     connection.on('UserStatusChanged', handleUserStatusChanged)
     connection.on('ReceiveNewMessage', handleMessage)
@@ -160,6 +227,11 @@ export function useSignalR(conversationId?: string | null) {
     connection.on('ReceiveTaskUpdated', handleTaskUpdated)
     connection.on('ReceiveTaskDeleted', handleTaskDeleted)
     connection.on('ReceiveTaskReminder', handleTaskReminder)
+    connection.on('IncomingCall', handleIncomingCall)
+    connection.on('CallAccepted', handleCallAccepted)
+    connection.on('CallRejected', handleCallRejected)
+    connection.on('CallEnded', handleCallEnded)
+    connection.on('ReceiveSignal', handleReceiveSignal)
 
     return () => {
       connection.off('ReceiveOnlineUsers', handleOnlineUsers)
@@ -176,6 +248,11 @@ export function useSignalR(conversationId?: string | null) {
       connection.off('ReceiveTaskUpdated', handleTaskUpdated)
       connection.off('ReceiveTaskDeleted', handleTaskDeleted)
       connection.off('ReceiveTaskReminder', handleTaskReminder)
+      connection.off('IncomingCall', handleIncomingCall)
+      connection.off('CallAccepted', handleCallAccepted)
+      connection.off('CallRejected', handleCallRejected)
+      connection.off('CallEnded', handleCallEnded)
+      connection.off('ReceiveSignal', handleReceiveSignal)
     }
   }, [conversationId])
 
@@ -205,6 +282,77 @@ export function useSignalR(conversationId?: string | null) {
     [conversationId]
   )
 
+  const startCall = useCallback(
+    (convId: string, callerName: string, isVideo: boolean) => {
+      setIncomingCallEvent(null)
+      setCallAcceptedEvent(null)
+      setCallRejectedEvent(null)
+      setCallEndedEvent(null)
+      setReceiveSignalEvent(null)
+      const connection = signalRService.getConnection()
+      if (connection.state === 'Connected') {
+        connection.invoke('StartCall', convId, callerName, isVideo).catch((err) => {
+          console.warn('StartCall error:', err)
+        })
+      }
+    },
+    []
+  )
+
+  const acceptCall = useCallback(
+    (convId: string, responderName: string) => {
+      setCallRejectedEvent(null)
+      setCallEndedEvent(null)
+      const connection = signalRService.getConnection()
+      if (connection.state === 'Connected') {
+        connection.invoke('AcceptCall', convId, responderName).catch((err) => {
+          console.warn('AcceptCall error:', err)
+        })
+      }
+    },
+    []
+  )
+
+  const rejectCall = useCallback(
+    (convId: string, reason?: string) => {
+      setIncomingCallEvent(null)
+      setCallAcceptedEvent(null)
+      const connection = signalRService.getConnection()
+      if (connection.state === 'Connected') {
+        connection.invoke('RejectCall', convId, reason || 'User declined').catch((err) => {
+          console.warn('RejectCall error:', err)
+        })
+      }
+    },
+    []
+  )
+
+  const endCall = useCallback(
+    (convId: string) => {
+      setIncomingCallEvent(null)
+      setCallAcceptedEvent(null)
+      const connection = signalRService.getConnection()
+      if (connection.state === 'Connected') {
+        connection.invoke('EndCall', convId).catch((err) => {
+          console.warn('EndCall error:', err)
+        })
+      }
+    },
+    []
+  )
+
+  const sendSignal = useCallback(
+    (convId: string, signalData: any) => {
+      const connection = signalRService.getConnection()
+      if (connection.state === 'Connected') {
+        connection.invoke('SendSignal', convId, signalData).catch((err) => {
+          console.warn('SendSignal error:', err)
+        })
+      }
+    },
+    []
+  )
+
   return {
     isConnected,
     onlineUserIds,
@@ -220,5 +368,15 @@ export function useSignalR(conversationId?: string | null) {
     taskDeletedEvent,
     taskReminderEvent,
     sendTyping,
+    incomingCallEvent,
+    callAcceptedEvent,
+    callRejectedEvent,
+    callEndedEvent,
+    receiveSignalEvent,
+    startCall,
+    acceptCall,
+    rejectCall,
+    endCall,
+    sendSignal,
   }
 }

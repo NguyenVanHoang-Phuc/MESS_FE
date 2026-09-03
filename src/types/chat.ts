@@ -169,3 +169,45 @@ export interface MessageSearchPagedResponse {
   pageSize: number
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// WebRTC Calling Types (SignalR Events)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface IncomingCallEvent {
+  conversationId: string
+  callerId: string
+  callerName: string
+  isVideo: boolean
+  startedAt: string
+}
+
+export interface CallAcceptedEvent {
+  conversationId: string
+  responderId: string
+  responderName: string
+}
+
+export interface CallRejectedEvent {
+  conversationId: string
+  userId: string
+  reason?: string
+}
+
+export interface CallEndedEvent {
+  conversationId: string
+  userId: string
+}
+
+export interface WebRTCSignalData {
+  type: 'offer' | 'answer' | 'candidate'
+  sdp?: RTCSessionDescriptionInit
+  candidate?: RTCIceCandidateInit
+}
+
+export interface ReceiveSignalEvent {
+  conversationId: string
+  senderId: string
+  signalData: WebRTCSignalData
+}
+
+

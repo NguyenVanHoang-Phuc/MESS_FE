@@ -21,11 +21,13 @@ import {
   Loader2,
   MoreHorizontal,
   Paperclip,
+  Phone,
   Smile,
   Trash2,
   Undo2,
   Upload,
   User,
+  Video,
   X,
   ZoomIn,
 } from "lucide-react"
@@ -40,11 +42,13 @@ import { getTasksApi } from "@/services/api/tasks"
 import { getCurrentUser } from "@/services/api/auth"
 import { formatCleanFileName, formatFileSize, formatMessageTime } from "@/utils/formatters"
 import { cn } from "@/utils/cn"
-import type { AttachmentInput, AttachmentResponse, ConversationResponse, MessageResponse, ReactionResponse } from "@/types/chat"
+import type { AttachmentInput, AttachmentResponse, ConversationResponse, MessageResponse, ReactionResponse, IncomingCallEvent } from "@/types/chat"
 import type { TaskResponse } from "@/types/task"
 import { CreateTaskModal } from "@/components/chat/create-task-modal"
 import { TaskItemBadge } from "@/components/chat/task-item-badge"
 import { TaskReminderToast } from "@/components/chat/task-reminder-toast"
+import { VideoCallModal } from "@/components/chat/video-call-modal"
+import { IncomingCallDialog } from "@/components/chat/incoming-call-dialog"
 
 const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "😡"]
 
@@ -79,8 +83,15 @@ export default function ConversationPage() {
   const [createTaskSourceMessage, setCreateTaskSourceMessage] = useState<MessageResponse | null>(null)
   const [conversationDetails, setConversationDetails] = useState<ConversationResponse | null>(null)
 
+  const [currentUser, setCurrentUser] = useState<any>(null)
+  const [hiddenMessageIds, setHiddenMessageIds] = useState<string[]>([])
+  const [recallingMessageId, setRecallingMessageId] = useState<string | null>(null)
+  const [confirmRecallId, setConfirmRecallId] = useState<string | null>(null)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+
   const fileInputRef = useRef<HTMLInputElement>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
+
   const {
     incomingMessage,
     readEvent,
@@ -91,13 +102,31 @@ export default function ConversationPage() {
     taskUpdatedEvent,
     taskDeletedEvent,
     taskReminderEvent,
-    sendTyping
+    sendTyping,
+    incomingCallEvent,
+    callAcceptedEvent,
+    callRejectedEvent,
+    callEndedEvent,
+    receiveSignalEvent,
+    startCall,
+    acceptCall,
+    rejectCall,
+    endCall,
+    sendSignal,
   } = useSignalR(conversationId)
-  const [currentUser, setCurrentUser] = useState<any>(null)
-  const [hiddenMessageIds, setHiddenMessageIds] = useState<string[]>([])
-  const [recallingMessageId, setRecallingMessageId] = useState<string | null>(null)
-  const [confirmRecallId, setConfirmRecallId] = useState<string | null>(null)
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+
+  const handleStartCall = (video: boolean) => {
+    if (!conversationId) return
+    window.dispatchEvent(
+      new CustomEvent('start-call', {
+        detail: {
+          video,
+          conversationId,
+          title: conversationDetails?.title || 'Cuộc gọi trực tuyến',
+        },
+      })
+    )
+  }
 
   // Live Typing Indicators
   const [typingUsers, setTypingUsers] = useState<{ userId: string; userName: string }[]>([])
@@ -1386,9 +1415,45 @@ export default function ConversationPage() {
                                         )}
                                       >
                                         {/* Text content if present */}
-                                        {message.content && (
-                                          <p className="leading-relaxed whitespace-pre-wrap text-sm">{message.content}</p>
-                                        )}
+                                        {message.content && (() => {
+                                          const isCallLog =
+                                            message.content.includes('Cuộc gọi thoại') ||
+                                            message.content.includes('Cuộc gọi video')
+                                          if (isCallLog) {
+                                            const isMissed = message.content.includes('nhỡ') || message.content.includes('từ chối')
+                                            const isVideoLog = message.content.includes('video')
+                                            const cleanText = message.content.replace(/^[^\w\sÀ-ỹ]+/u, '').trim()
+
+                                            return (
+                                              <div className="flex items-center gap-3 py-1">
+                                                <div
+                                                  className={cn(
+                                                    "flex size-9 items-center justify-center rounded-2xl shrink-0 shadow-xs",
+                                                    isMissed
+                                                      ? "bg-destructive/15 text-destructive"
+                                                      : isOwn
+                                                        ? "bg-white/20 text-white"
+                                                        : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                                                  )}
+                                                >
+                                                  {isVideoLog ? <Video className="size-4" /> : <Phone className="size-4" />}
+                                                </div>
+                                                <div className="min-w-0 flex-1">
+                                                  <p className="text-xs font-bold leading-tight">
+                                                    {cleanText}
+                                                  </p>
+                                                  <p className={cn(
+                                                    "text-[10px] mt-0.5",
+                                                    isOwn ? "text-primary-foreground/80" : "text-muted-foreground"
+                                                  )}>
+                                                    {isMissed ? 'Không có phản hồi' : 'Đã kết nối'}
+                                                  </p>
+                                                </div>
+                                              </div>
+                                            )
+                                          }
+                                          return <p className="leading-relaxed whitespace-pre-wrap text-sm">{message.content}</p>
+                                        })()}
 
                                         {/* Images Gallery */}
                                         {imageAttachments.length > 0 && (

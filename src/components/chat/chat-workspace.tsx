@@ -27,6 +27,7 @@ import {
   Menu,
   MessageSquare,
   MoreHorizontal,
+  Phone,
   Plus,
   Search,
   Settings,
@@ -59,11 +60,14 @@ import { ZaloBroadcastModal } from "@/components/zalo/zalo-broadcast-modal"
 import { ZaloPhoneSimulator } from "@/components/zalo/zalo-phone-simulator"
 import type { ZaloNotificationLogItem } from "@/lib/zalo-api"
 import { Button } from "@/components/ui/button"
-import type { AttachmentResponse, ConversationResponse, ParticipantResponse, UserSummaryResponse } from "@/types/chat"
+import type { AttachmentResponse, ConversationResponse, ParticipantResponse, UserSummaryResponse, IncomingCallEvent } from "@/types/chat"
 import type { UserProfile } from "@/types/auth"
 import { UserSettingsModal } from "@/components/settings/user-settings-modal"
 import { UserAvatar } from "@/components/chat/user-avatar"
 import { useTheme } from "@/context/theme-context"
+import { VideoCallModal } from "@/components/chat/video-call-modal"
+import { IncomingCallDialog } from "@/components/chat/incoming-call-dialog"
+import { sendMessageApi } from "@/services/api/chat"
 
 export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
   const params = useParams()
@@ -119,7 +123,128 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
     }
   }, [])
 
-  const { incomingMessage, incomingConversation, deletedConversationId, typingEvent, onlineUserIds } = useSignalR(conversationId)
+  const {
+    incomingMessage,
+    incomingConversation,
+    deletedConversationId,
+    typingEvent,
+    onlineUserIds,
+    incomingCallEvent,
+    callAcceptedEvent,
+    callRejectedEvent,
+    callEndedEvent,
+    receiveSignalEvent,
+    startCall,
+    acceptCall,
+    rejectCall,
+    endCall,
+    sendSignal,
+  } = useSignalR(conversationId)
+
+  // WebRTC Global Call State
+  const [isCallOpen, setIsCallOpen] = useState(false)
+  const [isCallVideo, setIsCallVideo] = useState(true)
+  const [isCallerState, setIsCallerState] = useState(false)
+  const [activeIncomingCall, setActiveIncomingCall] = useState<IncomingCallEvent | null>(null)
+  const [callActiveConversationId, setCallActiveConversationId] = useState<string | null>(null)
+  const [callActiveTitle, setCallActiveTitle] = useState<string>('Cuộc gọi')
+
+  // Listen for incoming calls globally
+  useEffect(() => {
+    if (incomingCallEvent) {
+      const myId = currentUser?.userId || currentUser?.id || currentUser?.sub
+      const myName = currentUser?.fullName || currentUser?.username
+      const isMe =
+        (myId && incomingCallEvent.callerId?.toLowerCase() === String(myId).toLowerCase()) ||
+        (myName && incomingCallEvent.callerName === myName) ||
+        incomingCallEvent.callerName === 'Tôi'
+
+      if (!isMe && !isCallOpen) {
+        setActiveIncomingCall(incomingCallEvent)
+      }
+    } else {
+      setActiveIncomingCall(null)
+    }
+  }, [incomingCallEvent, currentUser, isCallOpen])
+
+  const handleStartCall = (targetConvId: string, title: string, video: boolean) => {
+    if (!targetConvId) return
+    setCallActiveConversationId(targetConvId)
+    setCallActiveTitle(title)
+    setIsCallVideo(video)
+    setIsCallerState(true)
+    setIsCallOpen(true)
+    setActiveIncomingCall(null)
+    const callerName = currentUser?.fullName || currentUser?.username || 'Thành viên'
+    startCall(targetConvId, callerName, video)
+  }
+
+  const handleAcceptIncomingCall = (call: IncomingCallEvent) => {
+    setActiveIncomingCall(null)
+    setCallActiveConversationId(call.conversationId)
+    setCallActiveTitle(call.callerName || 'Cuộc gọi trực tuyến')
+    setIsCallVideo(call.isVideo)
+    setIsCallerState(false)
+    setIsCallOpen(true)
+    const responderName = currentUser?.fullName || currentUser?.username || 'Thành viên'
+    acceptCall(call.conversationId, responderName)
+  }
+
+  const handleRejectIncomingCall = (call: IncomingCallEvent) => {
+    setActiveIncomingCall(null)
+    rejectCall(call.conversationId, 'Bận')
+  }
+
+  const handleEndCall = async (duration: number = 0) => {
+    const wasCaller = isCallerState
+    const wasVideo = isCallVideo
+    const convId = callActiveConversationId || conversationId
+
+    setIsCallOpen(false)
+    setActiveIncomingCall(null)
+
+    if (convId) {
+      endCall(convId)
+
+      // Only caller sends log message
+      if (wasCaller) {
+        const mins = Math.floor(duration / 60)
+        const secs = duration % 60
+        const durationStr = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+
+        let callText = ''
+        if (duration > 0) {
+          callText = wasVideo
+            ? `Cuộc gọi video kết thúc · ${durationStr}`
+            : `Cuộc gọi thoại kết thúc · ${durationStr}`
+        } else {
+          callText = wasVideo ? 'Cuộc gọi video nhỡ' : 'Cuộc gọi thoại nhỡ'
+        }
+
+        try {
+          await sendMessageApi(convId, callText)
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  }
+
+  // Listen for start-call event dispatched from anywhere
+  useEffect(() => {
+    function onStartCallEvent(e: Event) {
+      const customEvent = e as CustomEvent<{ video: boolean; conversationId?: string; title?: string }>
+      const targetId = customEvent.detail?.conversationId || conversationId
+      if (targetId) {
+        const targetConv = conversations.find((c) => c.id === targetId)
+        const title = customEvent.detail?.title || targetConv?.title || 'Cuộc gọi trực tuyến'
+        handleStartCall(targetId, title, customEvent.detail?.video ?? true)
+      }
+    }
+    window.addEventListener('start-call', onStartCallEvent)
+    return () => window.removeEventListener('start-call', onStartCallEvent)
+  }, [conversationId, conversations, currentUser])
+
   const lastHandledMessageIdRef = useRef<string | null>(null)
   const [headerTypingUser, setHeaderTypingUser] = useState<string | null>(null)
   const headerTypingTimerRef = useRef<NodeJS.Timeout | null>(null)
@@ -1198,19 +1323,45 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
               <Search className="size-4" />
             </button>
             {selected && (
-              <button
-                onClick={() => toggleMuteConversation(selected.id)}
-                className={cn(
-                  "rounded-lg p-2 transition hover:bg-accent",
-                  mutedConversations.includes(selected.id)
-                    ? "text-destructive bg-destructive/10 hover:bg-destructive/20"
-                    : "text-muted-foreground hover:text-foreground"
-                )}
-                aria-label="Tắt / Bật thông báo"
-                title={mutedConversations.includes(selected.id) ? "Bật lại thông báo" : "Tắt thông báo cuộc trò chuyện này"}
-              >
-                {mutedConversations.includes(selected.id) ? <BellOff className="size-4" /> : <Bell className="size-4" />}
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    window.dispatchEvent(new CustomEvent('start-call', { detail: { video: false } }))
+                  }}
+                  className="rounded-lg p-2 text-muted-foreground hover:bg-accent hover:text-emerald-500 transition cursor-pointer"
+                  title="Gọi thoại"
+                  aria-label="Gọi thoại"
+                >
+                  <Phone className="size-4" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    window.dispatchEvent(new CustomEvent('start-call', { detail: { video: true } }))
+                  }}
+                  className="rounded-lg p-2 text-muted-foreground hover:bg-accent hover:text-primary transition cursor-pointer"
+                  title="Gọi video"
+                  aria-label="Gọi video"
+                >
+                  <Video className="size-4" />
+                </button>
+
+                <button
+                  onClick={() => toggleMuteConversation(selected.id)}
+                  className={cn(
+                    "rounded-lg p-2 transition hover:bg-accent",
+                    mutedConversations.includes(selected.id)
+                      ? "text-destructive bg-destructive/10 hover:bg-destructive/20"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                  aria-label="Tắt / Bật thông báo"
+                  title={mutedConversations.includes(selected.id) ? "Bật lại thông báo" : "Tắt thông báo cuộc trò chuyện này"}
+                >
+                  {mutedConversations.includes(selected.id) ? <BellOff className="size-4" /> : <Bell className="size-4" />}
+                </button>
+              </>
             )}
             <button
               onClick={() => setShowDetails((value) => !value)}
@@ -1347,24 +1498,43 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
                 )
               )}
             </p>
-            <div className="mt-3 flex items-center gap-2">
+            <div className="mt-3 flex items-center justify-center gap-1.5 flex-wrap">
+              <button
+                type="button"
+                onClick={() => {
+                  window.dispatchEvent(new CustomEvent('start-call', { detail: { video: false } }))
+                }}
+                className="flex items-center gap-1.5 rounded-xl border border-border bg-background px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-emerald-500 transition cursor-pointer shadow-2xs"
+                title="Gọi thoại"
+              >
+                <Phone className="size-3.5" /> Thoại
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  window.dispatchEvent(new CustomEvent('start-call', { detail: { video: true } }))
+                }}
+                className="flex items-center gap-1.5 rounded-xl border border-border bg-background px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-primary transition cursor-pointer shadow-2xs"
+                title="Gọi video"
+              >
+                <Video className="size-3.5" /> Video
+              </button>
+
               <button
                 onClick={() => selected && toggleMuteConversation(selected.id)}
                 className={cn(
-                  "flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-medium transition shadow-xs",
+                  "flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs font-medium transition shadow-2xs cursor-pointer",
                   selected && mutedConversations.includes(selected.id)
                     ? "border-destructive/30 bg-destructive/10 text-destructive hover:bg-destructive/20"
                     : "border-border bg-background hover:bg-muted text-muted-foreground hover:text-foreground"
                 )}
+                title={selected && mutedConversations.includes(selected.id) ? "Bật thông báo" : "Tắt thông báo"}
               >
                 {selected && mutedConversations.includes(selected.id) ? (
-                  <>
-                    <BellOff className="size-3.5" /> Bật thông báo
-                  </>
+                  <BellOff className="size-3.5" />
                 ) : (
-                  <>
-                    <Bell className="size-3.5" /> Tắt thông báo
-                  </>
+                  <Bell className="size-3.5" />
                 )}
               </button>
             </div>
@@ -1841,6 +2011,32 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
         onClose={() => setIsZaloSimOpen(false)}
         notifications={zaloLogs}
       />
+
+      {/* Global Incoming Call Popup Dialog */}
+      <IncomingCallDialog
+        call={activeIncomingCall}
+        onAccept={handleAcceptIncomingCall}
+        onReject={handleRejectIncomingCall}
+      />
+
+      {/* Global Active Video / Audio Call Modal */}
+      {callActiveConversationId && (
+        <VideoCallModal
+          isOpen={isCallOpen}
+          conversationId={callActiveConversationId}
+          conversationTitle={callActiveTitle}
+          isVideo={isCallVideo}
+          isCaller={isCallerState}
+          currentUserId={currentUser?.userId}
+          currentUserName={currentUser?.fullName}
+          callAcceptedEvent={callAcceptedEvent}
+          callRejectedEvent={callRejectedEvent}
+          callEndedEvent={callEndedEvent}
+          receiveSignalEvent={receiveSignalEvent}
+          sendSignal={sendSignal}
+          onEndCall={handleEndCall}
+        />
+      )}
     </div>
   )
 }
