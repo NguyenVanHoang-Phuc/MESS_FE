@@ -149,13 +149,18 @@ export function VideoCallModal({
 
   // ── Start Local Media Stream ─────────────────────────────────────────────
   const initLocalStream = useCallback(async () => {
-    if (localStreamRef.current) return localStreamRef.current
+    if (localStreamRef.current) {
+      console.log('[WebRTC] Local stream already exists:', localStreamRef.current.getTracks().map(t => `${t.kind}:${t.enabled}`))
+      return localStreamRef.current
+    }
     try {
+      console.log('[WebRTC] Requesting local media stream (video:', initialIsVideo, 'audio: true)...')
       const stream = await navigator.mediaDevices.getUserMedia({
         video: initialIsVideo ? { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' } : false,
         audio: true,
       })
       localStreamRef.current = stream
+      console.log('[WebRTC] Acquired local stream tracks:', stream.getTracks().map(t => `${t.kind} (id: ${t.id}, enabled: ${t.enabled})`))
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = stream
         localVideoRef.current.play().catch(() => {})
@@ -170,6 +175,7 @@ export function VideoCallModal({
         const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true })
         localStreamRef.current = audioStream
         setIsVideoOn(false)
+        console.log('[WebRTC] Fallback audio stream acquired:', audioStream.getTracks().map(t => `${t.kind} (enabled: ${t.enabled})`))
         if (peerConnectionRef.current) {
           ensureTracksOnPeerConnection(peerConnectionRef.current, audioStream)
         }
@@ -190,6 +196,7 @@ export function VideoCallModal({
       return peerConnectionRef.current
     }
 
+    console.log('[WebRTC] Creating new RTCPeerConnection with STUN servers...')
     const pc = new RTCPeerConnection(RTC_CONFIG)
     peerConnectionRef.current = pc
 
@@ -197,6 +204,7 @@ export function VideoCallModal({
     try {
       pc.addTransceiver('audio', { direction: 'sendrecv' })
       pc.addTransceiver('video', { direction: 'sendrecv' })
+      console.log('[WebRTC] Pre-allocated audio and video transceivers (sendrecv)')
     } catch (e) {
       console.warn('[WebRTC] addTransceiver error:', e)
     }
@@ -206,7 +214,7 @@ export function VideoCallModal({
     }
 
     pc.ontrack = (event) => {
-      console.log('[WebRTC] ontrack received:', event.track.kind, event.track.id, 'muted:', event.track.muted)
+      console.log('[WebRTC] ontrack received:', event.track.kind, 'trackId:', event.track.id, 'muted:', event.track.muted)
       
       let stream = remoteStreamRef.current
       if (!stream) {
@@ -234,10 +242,11 @@ export function VideoCallModal({
 
       if (event.track.kind === 'video') {
         const initialActive = !event.track.muted && event.track.readyState === 'live'
+        console.log('[WebRTC] Remote video track initial active state:', initialActive)
         setIsRemoteVideoActive(initialActive)
 
         event.track.onunmute = () => {
-          console.log('[WebRTC] remote video track onunmute - camera active!')
+          console.log('[WebRTC] 🟢 Remote video track onunmute - frames arriving!')
           setIsRemoteVideoActive(true)
           if (remoteVideoRef.current) {
             if (remoteVideoRef.current.srcObject !== remoteStreamRef.current) {
@@ -248,11 +257,12 @@ export function VideoCallModal({
         }
 
         event.track.onmute = () => {
-          console.log('[WebRTC] remote video track onmute - camera paused')
+          console.log('[WebRTC] 🔴 Remote video track onmute - camera paused')
           setIsRemoteVideoActive(false)
         }
 
         event.track.onended = () => {
+          console.log('[WebRTC] Remote video track onended')
           setIsRemoteVideoActive(false)
         }
       }
@@ -260,6 +270,7 @@ export function VideoCallModal({
 
     pc.onicecandidate = (event) => {
       if (event.candidate) {
+        console.log('[WebRTC] Generated ICE candidate, sending signal...')
         sendSignalRef.current(conversationId, {
           type: 'candidate',
           candidate: event.candidate,
@@ -268,7 +279,7 @@ export function VideoCallModal({
     }
 
     pc.onconnectionstatechange = () => {
-      console.log('[WebRTC] Connection state:', pc.connectionState)
+      console.log('[WebRTC] ⚡ Connection state changed to:', pc.connectionState)
       if (pc.connectionState === 'connected') {
         setCallStatus('connected')
         stopCallAudio()
@@ -290,6 +301,8 @@ export function VideoCallModal({
   useEffect(() => {
     if (!isOpen) return
 
+    console.log('[WebRTC] 📞 VideoCallModal MOUNTED / OPENED. isCaller:', isCaller, 'isVideo:', initialIsVideo, 'convId:', conversationId)
+
     lastHandledEndRef.current = callEndedEvent
     lastHandledRejectRef.current = callRejectedEvent
     lastHandledAcceptRef.current = callAcceptedEvent
@@ -307,9 +320,11 @@ export function VideoCallModal({
       if (isCancelled || !stream) return
 
       if (isCaller) {
+        console.log('[WebRTC] Caller: Playing outgoing dial tone and waiting for accept...')
         playOutgoingDialTone()
         setCallStatus('calling')
       } else {
+        console.log('[WebRTC] Receiver: Accepted call, setting up PeerConnection...')
         setCallStatus('connected')
         stopCallAudio()
         getOrCreatePeerConnection()
@@ -319,6 +334,7 @@ export function VideoCallModal({
     start()
 
     return () => {
+      console.log('[WebRTC] 🛑 VideoCallModal UNMOUNTING. Closing tracks and PeerConnection.')
       isCancelled = true
       stopCallAudio()
       if (localStreamRef.current) {
@@ -348,6 +364,7 @@ export function VideoCallModal({
     if (callAcceptedEvent === lastHandledAcceptRef.current) return
     if (callAcceptedEvent.conversationId !== conversationId) return
 
+    console.log('[WebRTC] Caller received CallAcceptedEvent! Creating SDP Offer...')
     lastHandledAcceptRef.current = callAcceptedEvent
     stopCallAudio()
     setCallStatus('connected')
@@ -365,6 +382,7 @@ export function VideoCallModal({
           offerToReceiveVideo: true,
         })
         await pc.setLocalDescription(offer)
+        console.log('[WebRTC] SDP Offer created and set as local description. Sending to receiver...')
         sendSignalRef.current(conversationId, {
           type: 'offer',
           sdp: pc.localDescription,
@@ -385,11 +403,14 @@ export function VideoCallModal({
     const { signalData } = receiveSignalEvent
     if (!signalData) return
 
+    console.log('[WebRTC] 📩 Received signal:', signalData.type)
+
     async function handleSignal() {
       const pc = getOrCreatePeerConnection()
 
       if (signalData.type === 'offer' && signalData.sdp) {
         try {
+          console.log('[WebRTC] Processing incoming Offer SDP, creating Answer...')
           const stream = localStreamRef.current || (await initLocalStream())
           if (stream) {
             ensureTracksOnPeerConnection(pc, stream)
@@ -400,6 +421,7 @@ export function VideoCallModal({
 
           const answer = await pc.createAnswer()
           await pc.setLocalDescription(answer)
+          console.log('[WebRTC] Created Answer SDP, sending back to caller...')
           sendSignalRef.current(conversationId, {
             type: 'answer',
             sdp: pc.localDescription,
@@ -411,8 +433,10 @@ export function VideoCallModal({
         }
       } else if (signalData.type === 'answer' && signalData.sdp) {
         try {
+          console.log('[WebRTC] Processing incoming Answer SDP from receiver...')
           await pc.setRemoteDescription(new RTCSessionDescription(signalData.sdp))
           await flushPendingCandidates(pc)
+          console.log('[WebRTC] Remote description set with Answer successfully.')
         } catch (err) {
           console.error('[WebRTC] Failed to handle answer:', err)
         }
@@ -421,10 +445,12 @@ export function VideoCallModal({
           if (pc.remoteDescription && pc.remoteDescription.type) {
             try {
               await pc.addIceCandidate(new RTCIceCandidate(signalData.candidate))
+              console.log('[WebRTC] Added remote ICE candidate successfully.')
             } catch (err) {
               console.warn('[WebRTC] Failed to add ICE candidate:', err)
             }
           } else {
+            console.log('[WebRTC] Queuing ICE candidate (remoteDescription not ready yet)')
             pendingCandidatesRef.current.push(signalData.candidate)
           }
         }
@@ -483,14 +509,19 @@ export function VideoCallModal({
   // ── Toggle Camera ────────────────────────────────────────────────────────
   const toggleVideo = async () => {
     try {
+      console.log('[WebRTC] 📹 toggleVideo clicked. Current isVideoOn:', isVideoOn)
       let videoTrack = localStreamRef.current?.getVideoTracks()[0]
 
       if (!videoTrack) {
+        console.log('[WebRTC] No local video track found, requesting camera...')
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
         })
         const newTrack = stream.getVideoTracks()[0]
-        if (!newTrack) return
+        if (!newTrack) {
+          console.warn('[WebRTC] No video track returned from getUserMedia')
+          return
+        }
 
         if (localStreamRef.current) {
           localStreamRef.current.addTrack(newTrack)
@@ -499,11 +530,13 @@ export function VideoCallModal({
         }
 
         videoTrack = newTrack
+        console.log('[WebRTC] Acquired new video track:', newTrack.id)
       }
 
       const nextVideoState = !isVideoOn
       videoTrack.enabled = nextVideoState
       setIsVideoOn(nextVideoState)
+      console.log('[WebRTC] Set local videoTrack.enabled to:', nextVideoState)
 
       if (localVideoRef.current && localStreamRef.current) {
         localVideoRef.current.srcObject = new MediaStream(localStreamRef.current.getTracks())
@@ -519,12 +552,15 @@ export function VideoCallModal({
         )
 
         if (transceiver && transceiver.sender) {
+          console.log('[WebRTC] Replacing track on transceiver sender:', nextVideoState ? videoTrack.id : 'null')
           await transceiver.sender.replaceTrack(nextVideoState ? videoTrack : null)
         } else {
           const videoSender = pc.getSenders().find((s) => s.track?.kind === 'video')
           if (videoSender) {
+            console.log('[WebRTC] Replacing track on sender:', nextVideoState ? videoTrack.id : 'null')
             await videoSender.replaceTrack(nextVideoState ? videoTrack : null)
           } else if (nextVideoState) {
+            console.log('[WebRTC] Adding video track to pc')
             pc.addTrack(videoTrack, localStreamRef.current!)
           }
         }

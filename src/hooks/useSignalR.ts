@@ -206,6 +206,7 @@ export function useSignalR(conversationId?: string | null) {
     }
 
     const handleReceiveSignal = (s: any) => {
+      console.log('SignalR: Received signal event:', s?.signalData?.type || s?.SignalData?.type || s)
       setReceiveSignalEvent({
         conversationId: s.conversationId || s.ConversationId,
         senderId: s.senderId || s.SenderId,
