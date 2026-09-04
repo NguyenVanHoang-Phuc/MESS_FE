@@ -26,7 +26,10 @@ const RTC_CONFIG: RTCConfiguration = {
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
   ],
+  iceCandidatePoolSize: 10,
 }
 
 export interface VideoCallModalProps {
@@ -66,6 +69,7 @@ export function VideoCallModal({
   const [isSpeakerOn, setIsSpeakerOn] = useState(true)
   const [isMinimized, setIsMinimized] = useState(false)
   const [callDuration, setCallDuration] = useState(0)
+  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null)
   const callDurationRef = useRef(0)
 
   const localVideoRef = useRef<HTMLVideoElement>(null)
@@ -73,6 +77,7 @@ export function VideoCallModal({
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null)
   const localStreamRef = useRef<MediaStream | null>(null)
   const screenStreamRef = useRef<MediaStream | null>(null)
+  const pendingCandidatesRef = useRef<RTCIceCandidateInit[]>([])
   const durationTimerRef = useRef<any>(null)
 
   // Stable callbacks via refs to prevent useEffect re-executions
@@ -86,60 +91,102 @@ export function VideoCallModal({
   const lastHandledRejectRef = useRef<any>(null)
   const lastHandledAcceptRef = useRef<any>(null)
 
-  // ── Format Duration (HH:MM:SS or MM:SS) ──────────────────────────────────
+  // ── Format Duration (MM:SS) ──────────────────────────────────
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60)
     const secs = seconds % 60
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
   }
 
+  // ── Attach All Tracks from Stream to PeerConnection ───────────────────────
+  const ensureTracksOnPeerConnection = useCallback((pc: RTCPeerConnection, stream: MediaStream) => {
+    const senders = pc.getSenders()
+    stream.getTracks().forEach((track) => {
+      const existingSender = senders.find((s) => s.track === track || (s.track && s.track.kind === track.kind))
+      if (existingSender) {
+        if (existingSender.track !== track) {
+          existingSender.replaceTrack(track).catch((err) => console.warn('[WebRTC] replaceTrack error:', err))
+        }
+      } else {
+        try {
+          pc.addTrack(track, stream)
+        } catch (err) {
+          console.warn('[WebRTC] addTrack error:', err)
+        }
+      }
+    })
+  }, [])
+
+  // ── Flush Queued ICE Candidates ──────────────────────────────────────────
+  const flushPendingCandidates = useCallback(async (pc: RTCPeerConnection) => {
+    while (pendingCandidatesRef.current.length > 0) {
+      const cand = pendingCandidatesRef.current.shift()
+      if (cand) {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(cand))
+        } catch (e) {
+          console.warn('[WebRTC] Error adding flushed ICE candidate:', e)
+        }
+      }
+    }
+  }, [])
+
   // ── Start Local Media Stream ─────────────────────────────────────────────
   const initLocalStream = useCallback(async () => {
     if (localStreamRef.current) return localStreamRef.current
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: initialIsVideo ? { width: { ideal: 1280 }, height: { ideal: 720 } } : false,
+        video: initialIsVideo ? { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' } : false,
         audio: true,
       })
       localStreamRef.current = stream
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = stream
       }
+      if (peerConnectionRef.current) {
+        ensureTracksOnPeerConnection(peerConnectionRef.current, stream)
+      }
       return stream
     } catch (err) {
-      console.warn('Could not access camera/microphone:', err)
+      console.warn('[WebRTC] Could not access camera, attempting audio only:', err)
       try {
         const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true })
         localStreamRef.current = audioStream
         setIsVideoOn(false)
+        if (peerConnectionRef.current) {
+          ensureTracksOnPeerConnection(peerConnectionRef.current, audioStream)
+        }
         return audioStream
       } catch (audioErr) {
-        console.error('Could not access audio device:', audioErr)
+        console.error('[WebRTC] Could not access audio device:', audioErr)
         return null
       }
     }
-  }, [initialIsVideo])
+  }, [initialIsVideo, ensureTracksOnPeerConnection])
 
   // ── Setup WebRTC PeerConnection ──────────────────────────────────────────
   const getOrCreatePeerConnection = useCallback(() => {
-    if (peerConnectionRef.current) return peerConnectionRef.current
+    if (peerConnectionRef.current) {
+      if (localStreamRef.current) {
+        ensureTracksOnPeerConnection(peerConnectionRef.current, localStreamRef.current)
+      }
+      return peerConnectionRef.current
+    }
 
     const pc = new RTCPeerConnection(RTC_CONFIG)
     peerConnectionRef.current = pc
 
     if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((track) => {
-        try {
-          pc.addTrack(track, localStreamRef.current!)
-        } catch {
-          /* ignore duplicate track */
-        }
-      })
+      ensureTracksOnPeerConnection(pc, localStreamRef.current)
     }
 
     pc.ontrack = (event) => {
-      if (remoteVideoRef.current && event.streams[0]) {
-        remoteVideoRef.current.srcObject = event.streams[0]
+      console.log('[WebRTC] ontrack received:', event.track.kind, event.streams)
+      const stream = (event.streams && event.streams[0]) ? event.streams[0] : new MediaStream([event.track])
+      setRemoteStream(stream)
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = stream
+        remoteVideoRef.current.play().catch(() => {})
       }
     }
 
@@ -153,6 +200,7 @@ export function VideoCallModal({
     }
 
     pc.onconnectionstatechange = () => {
+      console.log('[WebRTC] Connection state:', pc.connectionState)
       if (pc.connectionState === 'connected') {
         setCallStatus('connected')
         stopCallAudio()
@@ -160,13 +208,20 @@ export function VideoCallModal({
     }
 
     return pc
-  }, [conversationId])
+  }, [conversationId, ensureTracksOnPeerConnection])
+
+  // ── Ensure Remote Video Element is populated with stream ──────────────────
+  useEffect(() => {
+    if (remoteVideoRef.current && remoteStream) {
+      remoteVideoRef.current.srcObject = remoteStream
+      remoteVideoRef.current.play().catch(() => {})
+    }
+  }, [remoteStream, isMinimized])
 
   // ── Lifecycle: Initiate Call on Modal Mount ──────────────────────────────
   useEffect(() => {
     if (!isOpen) return
 
-    // Snapshot existing events from previous calls to prevent stale trigger
     lastHandledEndRef.current = callEndedEvent
     lastHandledRejectRef.current = callRejectedEvent
     lastHandledAcceptRef.current = callAcceptedEvent
@@ -174,6 +229,8 @@ export function VideoCallModal({
     let isCancelled = false
     setCallDuration(0)
     callDurationRef.current = 0
+    setRemoteStream(null)
+    pendingCandidatesRef.current = []
 
     async function start() {
       const stream = await initLocalStream()
@@ -209,6 +266,7 @@ export function VideoCallModal({
       if (durationTimerRef.current) {
         clearInterval(durationTimerRef.current)
       }
+      pendingCandidatesRef.current = []
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen])
@@ -224,7 +282,12 @@ export function VideoCallModal({
     setCallStatus('connected')
 
     async function createOffer() {
+      const stream = localStreamRef.current || (await initLocalStream())
       const pc = getOrCreatePeerConnection()
+      if (stream) {
+        ensureTracksOnPeerConnection(pc, stream)
+      }
+
       try {
         const offer = await pc.createOffer({
           offerToReceiveAudio: true,
@@ -236,12 +299,12 @@ export function VideoCallModal({
           sdp: pc.localDescription,
         })
       } catch (err) {
-        console.error('Failed to create WebRTC offer:', err)
+        console.error('[WebRTC] Failed to create offer:', err)
       }
     }
 
     createOffer()
-  }, [isOpen, isCaller, callAcceptedEvent, conversationId, getOrCreatePeerConnection])
+  }, [isOpen, isCaller, callAcceptedEvent, conversationId, getOrCreatePeerConnection, initLocalStream, ensureTracksOnPeerConnection])
 
   // ── Handle Incoming Signals (Offer / Answer / Candidate) ─────────────────
   useEffect(() => {
@@ -256,7 +319,14 @@ export function VideoCallModal({
 
       if (signalData.type === 'offer' && signalData.sdp) {
         try {
+          const stream = localStreamRef.current || (await initLocalStream())
+          if (stream) {
+            ensureTracksOnPeerConnection(pc, stream)
+          }
+
           await pc.setRemoteDescription(new RTCSessionDescription(signalData.sdp))
+          await flushPendingCandidates(pc)
+
           const answer = await pc.createAnswer()
           await pc.setLocalDescription(answer)
           sendSignalRef.current(conversationId, {
@@ -266,27 +336,32 @@ export function VideoCallModal({
           setCallStatus('connected')
           stopCallAudio()
         } catch (err) {
-          console.error('Failed to handle offer:', err)
+          console.error('[WebRTC] Failed to handle offer:', err)
         }
       } else if (signalData.type === 'answer' && signalData.sdp) {
         try {
           await pc.setRemoteDescription(new RTCSessionDescription(signalData.sdp))
+          await flushPendingCandidates(pc)
         } catch (err) {
-          console.error('Failed to handle answer:', err)
+          console.error('[WebRTC] Failed to handle answer:', err)
         }
       } else if (signalData.type === 'candidate') {
-        try {
-          if (signalData.candidate) {
-            await pc.addIceCandidate(new RTCIceCandidate(signalData.candidate))
+        if (signalData.candidate) {
+          if (pc.remoteDescription && pc.remoteDescription.type) {
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(signalData.candidate))
+            } catch (err) {
+              console.warn('[WebRTC] Failed to add ICE candidate:', err)
+            }
+          } else {
+            pendingCandidatesRef.current.push(signalData.candidate)
           }
-        } catch (err) {
-          console.error('Failed to add ICE candidate:', err)
         }
       }
     }
 
     handleSignal()
-  }, [isOpen, receiveSignalEvent, conversationId, getOrCreatePeerConnection])
+  }, [isOpen, receiveSignalEvent, conversationId, getOrCreatePeerConnection, initLocalStream, ensureTracksOnPeerConnection, flushPendingCandidates])
 
   // ── Handle Call Rejected / Ended Events ──────────────────────────────────
   useEffect(() => {
@@ -344,7 +419,7 @@ export function VideoCallModal({
       } else {
         try {
           const stream = await navigator.mediaDevices.getUserMedia({
-            video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+            video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
           })
           const newVideoTrack = stream.getVideoTracks()[0]
           localStreamRef.current.addTrack(newVideoTrack)
@@ -352,11 +427,21 @@ export function VideoCallModal({
             localVideoRef.current.srcObject = localStreamRef.current
           }
           if (peerConnectionRef.current) {
-            peerConnectionRef.current.addTrack(newVideoTrack, localStreamRef.current)
+            const pc = peerConnectionRef.current
+            const senders = pc.getSenders()
+            const videoSender = senders.find((s) => s.track?.kind === 'video')
+            if (videoSender) {
+              await videoSender.replaceTrack(newVideoTrack)
+            } else {
+              pc.addTrack(newVideoTrack, localStreamRef.current)
+              const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true })
+              await pc.setLocalDescription(offer)
+              sendSignalRef.current(conversationId, { type: 'offer', sdp: pc.localDescription })
+            }
           }
           setIsVideoOn(true)
         } catch (err) {
-          console.error('Could not activate camera:', err)
+          console.error('[WebRTC] Could not activate camera:', err)
         }
       }
     }
@@ -547,18 +632,20 @@ export function VideoCallModal({
           />
 
           {/* Placeholder when calling or audio only */}
-          {callStatus !== 'connected' && (
-            <div className="flex flex-col items-center gap-4 text-center p-6 animate-in zoom-in-95">
+          {(!remoteStream || callStatus !== 'connected') && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 text-center p-6 animate-in zoom-in-95 pointer-events-none bg-neutral-900/90">
               <div className="relative flex size-28 items-center justify-center rounded-full bg-linear-to-tr from-primary to-orange-500 text-3xl font-bold text-white shadow-2xl">
                 {getInitials(conversationTitle || 'User')}
-                <div className="absolute inset-0 rounded-full border-2 border-white/20 animate-ping" />
+                {callStatus === 'calling' && (
+                  <div className="absolute inset-0 rounded-full border-2 border-white/20 animate-ping" />
+                )}
               </div>
               <div>
                 <h4 className="text-lg font-bold text-white">
                   {conversationTitle || 'Đang gọi...'}
                 </h4>
                 <p className="text-xs text-neutral-400 mt-1">
-                  {callStatus === 'calling' ? 'Đang đổ chuông tới người nhận...' : 'Đang thiết lập kênh WebRTC...'}
+                  {callStatus === 'calling' ? 'Đang đổ chuông tới người nhận...' : 'Đang kết nối video...'}
                 </p>
               </div>
             </div>

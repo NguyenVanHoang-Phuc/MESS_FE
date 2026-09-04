@@ -159,13 +159,16 @@ export function ChatWorkspace({ children }: { children?: React.ReactNode }) {
         (myName && incomingCallEvent.callerName === myName) ||
         incomingCallEvent.callerName === 'Tôi'
 
-      if (!isMe && !isCallOpen) {
+      // Only show incoming call if current user belongs to this conversation
+      const isMyConversation = conversations.length === 0 || conversations.some((c) => c.id === incomingCallEvent.conversationId)
+
+      if (!isMe && isMyConversation && !isCallOpen) {
         setActiveIncomingCall(incomingCallEvent)
       }
     } else {
       setActiveIncomingCall(null)
     }
-  }, [incomingCallEvent, currentUser, isCallOpen])
+  }, [incomingCallEvent, currentUser, isCallOpen, conversations])
 
   const handleStartCall = (targetConvId: string, title: string, video: boolean) => {
     if (!targetConvId) return
