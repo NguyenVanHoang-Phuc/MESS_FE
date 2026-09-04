@@ -70,6 +70,7 @@ export function VideoCallModal({
   const [isMinimized, setIsMinimized] = useState(false)
   const [callDuration, setCallDuration] = useState(0)
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null)
+  const [isRemoteVideoActive, setIsRemoteVideoActive] = useState(false)
   const callDurationRef = useRef(0)
 
   const localVideoRef = useRef<HTMLVideoElement>(null)
@@ -77,6 +78,7 @@ export function VideoCallModal({
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null)
   const localStreamRef = useRef<MediaStream | null>(null)
   const screenStreamRef = useRef<MediaStream | null>(null)
+  const remoteStreamRef = useRef<MediaStream | null>(null)
   const pendingCandidatesRef = useRef<RTCIceCandidateInit[]>([])
   const durationTimerRef = useRef<any>(null)
 
@@ -100,18 +102,32 @@ export function VideoCallModal({
 
   // ── Attach All Tracks from Stream to PeerConnection ───────────────────────
   const ensureTracksOnPeerConnection = useCallback((pc: RTCPeerConnection, stream: MediaStream) => {
-    const senders = pc.getSenders()
+    const transceivers = pc.getTransceivers ? pc.getTransceivers() : []
+    const senders = pc.getSenders ? pc.getSenders() : []
+
     stream.getTracks().forEach((track) => {
-      const existingSender = senders.find((s) => s.track === track || (s.track && s.track.kind === track.kind))
-      if (existingSender) {
-        if (existingSender.track !== track) {
-          existingSender.replaceTrack(track).catch((err) => console.warn('[WebRTC] replaceTrack error:', err))
+      // Find matching transceiver by sender or receiver track kind
+      const transceiver = transceivers.find(
+        (t) => (t.sender?.track && t.sender.track.kind === track.kind) ||
+               (t.receiver?.track && t.receiver.track.kind === track.kind)
+      )
+
+      if (transceiver && transceiver.sender) {
+        if (transceiver.sender.track !== track) {
+          transceiver.sender.replaceTrack(track).catch((err) => console.warn('[WebRTC] replaceTrack error:', err))
         }
       } else {
-        try {
-          pc.addTrack(track, stream)
-        } catch (err) {
-          console.warn('[WebRTC] addTrack error:', err)
+        const existingSender = senders.find((s) => s.track && s.track.kind === track.kind)
+        if (existingSender) {
+          if (existingSender.track !== track) {
+            existingSender.replaceTrack(track).catch((err) => console.warn('[WebRTC] replaceTrack error:', err))
+          }
+        } else {
+          try {
+            pc.addTrack(track, stream)
+          } catch (err) {
+            console.warn('[WebRTC] addTrack error:', err)
+          }
         }
       }
     })
@@ -142,6 +158,7 @@ export function VideoCallModal({
       localStreamRef.current = stream
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = stream
+        localVideoRef.current.play().catch(() => {})
       }
       if (peerConnectionRef.current) {
         ensureTracksOnPeerConnection(peerConnectionRef.current, stream)
@@ -164,7 +181,7 @@ export function VideoCallModal({
     }
   }, [initialIsVideo, ensureTracksOnPeerConnection])
 
-  // ── Setup WebRTC PeerConnection ──────────────────────────────────────────
+  // ── Setup WebRTC PeerConnection with Transceivers ────────────────────────
   const getOrCreatePeerConnection = useCallback(() => {
     if (peerConnectionRef.current) {
       if (localStreamRef.current) {
@@ -176,17 +193,68 @@ export function VideoCallModal({
     const pc = new RTCPeerConnection(RTC_CONFIG)
     peerConnectionRef.current = pc
 
+    // Always create audio and video transceivers to guarantee bi-directional video negotiation
+    try {
+      pc.addTransceiver('audio', { direction: 'sendrecv' })
+      pc.addTransceiver('video', { direction: 'sendrecv' })
+    } catch (e) {
+      console.warn('[WebRTC] addTransceiver error:', e)
+    }
+
     if (localStreamRef.current) {
       ensureTracksOnPeerConnection(pc, localStreamRef.current)
     }
 
     pc.ontrack = (event) => {
-      console.log('[WebRTC] ontrack received:', event.track.kind, event.streams)
-      const stream = (event.streams && event.streams[0]) ? event.streams[0] : new MediaStream([event.track])
-      setRemoteStream(stream)
+      console.log('[WebRTC] ontrack received:', event.track.kind, event.track.id, 'muted:', event.track.muted)
+      
+      let stream = remoteStreamRef.current
+      if (!stream) {
+        stream = new MediaStream()
+        remoteStreamRef.current = stream
+      }
+
+      const existing = stream.getTracks().find((t) => t.kind === event.track.kind)
+      if (existing && existing.id !== event.track.id) {
+        stream.removeTrack(existing)
+      }
+      if (!stream.getTracks().some((t) => t.id === event.track.id)) {
+        stream.addTrack(event.track)
+      }
+
+      // Recreate a fresh MediaStream instance to trigger HTML5 video element pipeline re-attach
+      const freshStream = new MediaStream(stream.getTracks())
+      remoteStreamRef.current = freshStream
+      setRemoteStream(freshStream)
+
       if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = stream
-        remoteVideoRef.current.play().catch(() => {})
+        remoteVideoRef.current.srcObject = freshStream
+        remoteVideoRef.current.play().catch((e) => console.warn('[WebRTC] remote video play error:', e))
+      }
+
+      if (event.track.kind === 'video') {
+        const initialActive = !event.track.muted && event.track.readyState === 'live'
+        setIsRemoteVideoActive(initialActive)
+
+        event.track.onunmute = () => {
+          console.log('[WebRTC] remote video track onunmute - camera active!')
+          setIsRemoteVideoActive(true)
+          if (remoteVideoRef.current) {
+            if (remoteVideoRef.current.srcObject !== remoteStreamRef.current) {
+              remoteVideoRef.current.srcObject = remoteStreamRef.current
+            }
+            remoteVideoRef.current.play().catch(() => {})
+          }
+        }
+
+        event.track.onmute = () => {
+          console.log('[WebRTC] remote video track onmute - camera paused')
+          setIsRemoteVideoActive(false)
+        }
+
+        event.track.onended = () => {
+          setIsRemoteVideoActive(false)
+        }
       }
     }
 
@@ -230,6 +298,8 @@ export function VideoCallModal({
     setCallDuration(0)
     callDurationRef.current = 0
     setRemoteStream(null)
+    remoteStreamRef.current = null
+    setIsRemoteVideoActive(false)
     pendingCandidatesRef.current = []
 
     async function start() {
@@ -266,6 +336,7 @@ export function VideoCallModal({
       if (durationTimerRef.current) {
         clearInterval(durationTimerRef.current)
       }
+      remoteStreamRef.current = null
       pendingCandidatesRef.current = []
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -411,39 +482,55 @@ export function VideoCallModal({
 
   // ── Toggle Camera ────────────────────────────────────────────────────────
   const toggleVideo = async () => {
-    if (localStreamRef.current) {
-      const videoTrack = localStreamRef.current.getVideoTracks()[0]
-      if (videoTrack) {
-        videoTrack.enabled = !videoTrack.enabled
-        setIsVideoOn(videoTrack.enabled)
-      } else {
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({
-            video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
-          })
-          const newVideoTrack = stream.getVideoTracks()[0]
-          localStreamRef.current.addTrack(newVideoTrack)
-          if (localVideoRef.current) {
-            localVideoRef.current.srcObject = localStreamRef.current
+    try {
+      let videoTrack = localStreamRef.current?.getVideoTracks()[0]
+
+      if (!videoTrack) {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+        })
+        const newTrack = stream.getVideoTracks()[0]
+        if (!newTrack) return
+
+        if (localStreamRef.current) {
+          localStreamRef.current.addTrack(newTrack)
+        } else {
+          localStreamRef.current = stream
+        }
+
+        videoTrack = newTrack
+      }
+
+      const nextVideoState = !isVideoOn
+      videoTrack.enabled = nextVideoState
+      setIsVideoOn(nextVideoState)
+
+      if (localVideoRef.current && localStreamRef.current) {
+        localVideoRef.current.srcObject = new MediaStream(localStreamRef.current.getTracks())
+        localVideoRef.current.play().catch(() => {})
+      }
+
+      if (peerConnectionRef.current) {
+        const pc = peerConnectionRef.current
+        const transceivers = pc.getTransceivers ? pc.getTransceivers() : []
+        const transceiver = transceivers.find(
+          (t) => (t.sender?.track && t.sender.track.kind === 'video') ||
+                 (t.receiver?.track && t.receiver.track.kind === 'video')
+        )
+
+        if (transceiver && transceiver.sender) {
+          await transceiver.sender.replaceTrack(nextVideoState ? videoTrack : null)
+        } else {
+          const videoSender = pc.getSenders().find((s) => s.track?.kind === 'video')
+          if (videoSender) {
+            await videoSender.replaceTrack(nextVideoState ? videoTrack : null)
+          } else if (nextVideoState) {
+            pc.addTrack(videoTrack, localStreamRef.current!)
           }
-          if (peerConnectionRef.current) {
-            const pc = peerConnectionRef.current
-            const senders = pc.getSenders()
-            const videoSender = senders.find((s) => s.track?.kind === 'video')
-            if (videoSender) {
-              await videoSender.replaceTrack(newVideoTrack)
-            } else {
-              pc.addTrack(newVideoTrack, localStreamRef.current)
-              const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true })
-              await pc.setLocalDescription(offer)
-              sendSignalRef.current(conversationId, { type: 'offer', sdp: pc.localDescription })
-            }
-          }
-          setIsVideoOn(true)
-        } catch (err) {
-          console.error('[WebRTC] Could not activate camera:', err)
         }
       }
+    } catch (err) {
+      console.error('[WebRTC] Could not toggle camera:', err)
     }
   }
 
@@ -472,15 +559,25 @@ export function VideoCallModal({
       const screenTrack = screenStream.getVideoTracks()[0]
 
       if (peerConnectionRef.current) {
-        const senders = peerConnectionRef.current.getSenders()
-        const videoSender = senders.find((s) => s.track?.kind === 'video')
-        if (videoSender) {
-          videoSender.replaceTrack(screenTrack)
+        const pc = peerConnectionRef.current
+        const transceivers = pc.getTransceivers ? pc.getTransceivers() : []
+        const transceiver = transceivers.find(
+          (t) => (t.sender?.track && t.sender.track.kind === 'video') ||
+                 (t.receiver?.track && t.receiver.track.kind === 'video')
+        )
+        if (transceiver && transceiver.sender) {
+          await transceiver.sender.replaceTrack(screenTrack)
+        } else {
+          const videoSender = pc.getSenders().find((s) => s.track?.kind === 'video')
+          if (videoSender) {
+            await videoSender.replaceTrack(screenTrack)
+          }
         }
       }
 
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = screenStream
+        localVideoRef.current.play().catch(() => {})
       }
 
       screenTrack.onended = () => {
@@ -501,13 +598,24 @@ export function VideoCallModal({
 
     if (localStreamRef.current && peerConnectionRef.current) {
       const videoTrack = localStreamRef.current.getVideoTracks()[0]
-      const senders = peerConnectionRef.current.getSenders()
-      const videoSender = senders.find((s) => s.track?.kind === 'video')
-      if (videoSender && videoTrack) {
-        videoSender.replaceTrack(videoTrack)
+      const pc = peerConnectionRef.current
+      const transceivers = pc.getTransceivers ? pc.getTransceivers() : []
+      const transceiver = transceivers.find(
+        (t) => (t.sender?.track && t.sender.track.kind === 'video') ||
+               (t.receiver?.track && t.receiver.track.kind === 'video')
+      )
+      if (transceiver && transceiver.sender) {
+        transceiver.sender.replaceTrack(isVideoOn && videoTrack ? videoTrack : null).catch(() => {})
+      } else {
+        const videoSender = pc.getSenders().find((s) => s.track?.kind === 'video')
+        if (videoSender) {
+          videoSender.replaceTrack(isVideoOn && videoTrack ? videoTrack : null).catch(() => {})
+        }
       }
+
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = localStreamRef.current
+        localVideoRef.current.play().catch(() => {})
       }
     }
     setIsScreenSharing(false)
@@ -530,8 +638,16 @@ export function VideoCallModal({
             ref={remoteVideoRef}
             autoPlay
             playsInline
-            className="size-full object-cover"
+            className={cn('size-full object-cover', isRemoteVideoActive ? 'block' : 'hidden')}
           />
+          {!isRemoteVideoActive && (
+            <div className="flex size-full flex-col items-center justify-center bg-neutral-900 text-neutral-400">
+              <div className="size-10 rounded-full bg-primary flex items-center justify-center font-bold text-white text-xs mb-1">
+                {getInitials(conversationTitle || 'Call')}
+              </div>
+              <span className="text-[10px] text-neutral-400">Đang trò chuyện thoại</span>
+            </div>
+          )}
           <div className="absolute top-2 left-2 flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-black/60 text-[10px] text-white font-medium">
             <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
             {formatDuration(callDuration)}
@@ -627,13 +743,13 @@ export function VideoCallModal({
             playsInline
             className={cn(
               'size-full object-cover transition-opacity duration-300',
-              callStatus === 'connected' ? 'opacity-100' : 'opacity-0'
+              isRemoteVideoActive && callStatus === 'connected' ? 'opacity-100' : 'opacity-0'
             )}
           />
 
-          {/* Placeholder when calling or audio only */}
-          {(!remoteStream || callStatus !== 'connected') && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 text-center p-6 animate-in zoom-in-95 pointer-events-none bg-neutral-900/90">
+          {/* Fallback avatar overlay when remote video is not streaming or calling */}
+          {(!isRemoteVideoActive || callStatus !== 'connected') && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 text-center p-6 animate-in zoom-in-95 pointer-events-none bg-neutral-900/95">
               <div className="relative flex size-28 items-center justify-center rounded-full bg-linear-to-tr from-primary to-orange-500 text-3xl font-bold text-white shadow-2xl">
                 {getInitials(conversationTitle || 'User')}
                 {callStatus === 'calling' && (
@@ -645,7 +761,9 @@ export function VideoCallModal({
                   {conversationTitle || 'Đang gọi...'}
                 </h4>
                 <p className="text-xs text-neutral-400 mt-1">
-                  {callStatus === 'calling' ? 'Đang đổ chuông tới người nhận...' : 'Đang kết nối video...'}
+                  {callStatus === 'calling'
+                    ? 'Đang đổ chuông tới người nhận...'
+                    : 'Đã kết nối cuộc gọi'}
                 </p>
               </div>
             </div>
